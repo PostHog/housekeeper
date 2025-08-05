@@ -4,13 +4,29 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/spf13/viper"
 )
 
-func ch() {
+type CHError struct {
+	Name             string
+	Code             int32
+	Value            uint64
+	LastErrorTime    time.Time
+	LastErrorMessage string
+	LastErrorTrace   []uint64
+	Remote           bool
+}
+
+func (e *CHError) String() string {
+	return fmt.Sprintf("Name: %s, Code: %d, Value: %d, LastErrorTime: %s, LastErrorMessage: %s, LastErrorTrace: %v, Remote: %t",
+		e.Name, e.Code, e.Value, e.LastErrorTime, e.LastErrorMessage, e.LastErrorTrace, e.Remote)
+}
+
+func CHErrorAnalysis() ([]CHError, error) {
 	fmt.Println("Connecting to ClickHouse...")
 	conn, err := connect()
 	if err != nil {
@@ -18,19 +34,7 @@ func ch() {
 	}
 
 	ctx := context.Background()
-	rows, err := conn.Query(ctx, "SELECT name, toString(uuid) as uuid_str FROM system.tables LIMIT 5")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	for rows.Next() {
-		var name, uuid string
-		if err := rows.Scan(&name, &uuid); err != nil {
-			log.Fatal(err)
-		}
-		log.Printf("name: %s, uuid: %s", name, uuid)
-	}
-
+	return getCHErrors(ctx, conn)
 }
 
 func connect() (driver.Conn, error) {
@@ -69,4 +73,33 @@ func connect() (driver.Conn, error) {
 		return nil, err
 	}
 	return conn, nil
+}
+
+func getCHErrors(ctx context.Context, conn driver.Conn) ([]CHError, error) {
+	query := "SELECT name, code, value, last_error_time, last_error_message, last_error_trace, remote" +
+		" FROM system.errors" +
+		" WHERE last_error_time > now() - INTERVAL 1 HOUR"
+	rows, err := conn.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	var errors []CHError
+	for rows.Next() {
+		var chError CHError
+		if err := rows.Scan(
+			&chError.Name,
+			&chError.Code,
+			&chError.Value,
+			&chError.LastErrorTime,
+			&chError.LastErrorMessage,
+			&chError.LastErrorTrace,
+			&chError.Remote,
+		); err != nil {
+			log.Fatal(err)
+		}
+		errors = append(errors, chError)
+	}
+
+	return errors, nil
 }

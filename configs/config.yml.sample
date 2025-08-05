@@ -1,0 +1,7 @@
+gemini_key: "YOUR_GEMINI_KEY"
+clickhouse:
+  host: "127.0.0.1"
+  port: 9000
+  user: "default"
+  password: "default"
+  database: "default"

@@ -1,4 +1,4 @@
-module github.com/fuziontech/shitpost
+module github.com/fuziontech/chore
 
 go 1.23.0
 

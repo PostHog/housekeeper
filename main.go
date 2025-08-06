@@ -8,7 +8,7 @@ import (
 )
 
 func main() {
-	fmt.Println("Welcome to shitpost")
+	fmt.Println("Welcome to chore")
 
 	loadConfig()
 	apiKey := viper.GetString("gemini_key")
@@ -23,9 +23,7 @@ func main() {
 
 	if len(errors) > 0 {
 		fmt.Println("Errors found:")
-		for _, chError := range errors {
-			AnalyzeErrors(chError)
-		}
+		AnalyzeErrors(errors)
 	}
 
 }

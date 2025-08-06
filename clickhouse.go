@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -11,7 +12,10 @@ import (
 	"github.com/spf13/viper"
 )
 
+type CHErrors []CHError
+
 type CHError struct {
+	Hostname         string
 	Name             string
 	Code             int32
 	Value            uint64
@@ -22,8 +26,16 @@ type CHError struct {
 }
 
 func (e *CHError) String() string {
-	return fmt.Sprintf("Name: %s, Code: %d, Value: %d, LastErrorTime: %s, LastErrorMessage: %s, LastErrorTrace: %v, Remote: %t",
-		e.Name, e.Code, e.Value, e.LastErrorTime, e.LastErrorMessage, e.LastErrorTrace, e.Remote)
+	return fmt.Sprintf("Hostname: %s, Name: %s, Code: %d, Value: %d, LastErrorTime: %s, LastErrorMessage: %s, LastErrorTrace: %v, Remote: %t",
+		e.Hostname, e.Name, e.Code, e.Value, e.LastErrorTime, e.LastErrorMessage, e.LastErrorTrace, e.Remote)
+}
+
+func (es *CHErrors) String() string {
+	var errors []string
+	for _, err := range *es {
+		errors = append(errors, err.String())
+	}
+	return strings.Join(errors, "\n")
 }
 
 func CHErrorAnalysis() ([]CHError, error) {
@@ -76,8 +88,9 @@ func connect() (driver.Conn, error) {
 }
 
 func getCHErrors(ctx context.Context, conn driver.Conn) ([]CHError, error) {
-	query := "SELECT name, code, value, last_error_time, last_error_message, last_error_trace, remote" +
-		" FROM system.errors" +
+	cluster := viper.GetString("clickhouse.cluster")
+	query := "SELECT hostname() hostname, name, code, value, last_error_time, last_error_message, last_error_trace, remote" +
+		" FROM clusterAllReplicas(" + cluster + ", system.errors)" +
 		" WHERE last_error_time > now() - INTERVAL 1 HOUR"
 	rows, err := conn.Query(ctx, query)
 	if err != nil {
@@ -88,6 +101,7 @@ func getCHErrors(ctx context.Context, conn driver.Conn) ([]CHError, error) {
 	for rows.Next() {
 		var chError CHError
 		if err := rows.Scan(
+			&chError.Hostname,
 			&chError.Name,
 			&chError.Code,
 			&chError.Value,

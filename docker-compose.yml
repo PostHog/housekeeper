@@ -14,7 +14,7 @@ services:
     environment:
       CLICKHOUSE_USER: default
       CLICKHOUSE_PASSWORD: default
-      CLICKHOUSE_DB: shitpost
+      CLICKHOUSE_DB: default
     ulimits:
       nofile:
         soft: 262144

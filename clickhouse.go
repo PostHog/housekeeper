@@ -57,7 +57,7 @@ func connect() (driver.Conn, error) {
 			Addr: []string{addr},
 			Auth: clickhouse.Auth{
 				Database: viper.GetString("clickhouse.database"),
-				Username: viper.GetString("clickhouse.username"),
+				Username: viper.GetString("clickhouse.user"),
 				Password: viper.GetString("clickhouse.password"),
 			},
 			ClientInfo: clickhouse.ClientInfo{

@@ -34,3 +34,4 @@ go.work.sum
 configs/config.yml
 __debug*
 docker/
+.claude/

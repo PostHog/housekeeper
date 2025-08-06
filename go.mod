@@ -1,4 +1,4 @@
-module github.com/fuziontech/chore
+module github.com/fuziontech/housekeeper
 
 go 1.23.0
 

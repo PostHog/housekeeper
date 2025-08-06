@@ -40,6 +40,8 @@ func AnalyzeErrors(chErrors CHErrors) string {
 		"remote (UInt8) — remote exception (i.e. received during one of the distributed queries).\n" +
 		"Be sure to ruthlessly prioritize the most important errors first.\n" +
 		"Do not exaggerate the severity of the errors and suggest solutions.\n" +
+		"Format it for slack channel markdown\n" +
+		"Errors are: \n" +
 		chErrors.String()
 
 	resp, err := model.GenerateContent(ctx, genai.Text(prompt))

@@ -14,7 +14,7 @@ This is a Go application that monitors and analyzes ClickHouse database errors u
 go run .
 
 # Build the application
-go build -o chore
+go build -o housekeeper
 
 # Run with custom config
 go run . -c configs/config.yml

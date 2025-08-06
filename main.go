@@ -8,7 +8,7 @@ import (
 )
 
 func main() {
-	fmt.Println("Welcome to chore")
+	fmt.Println("Welcome to housekeeper, an AI CH Cluster Observer 👀")
 
 	loadConfig()
 	apiKey := viper.GetString("gemini_key")

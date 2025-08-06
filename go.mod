@@ -6,7 +6,6 @@ toolchain go1.24.5
 
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.40.1
-	github.com/PuerkitoBio/goquery v1.10.3
 	github.com/google/generative-ai-go v0.20.1
 	github.com/spf13/viper v1.20.1
 	google.golang.org/api v0.215.0
@@ -21,7 +20,6 @@ require (
 	cloud.google.com/go/longrunning v0.6.2 // indirect
 	github.com/ClickHouse/ch-go v0.67.0 // indirect
 	github.com/andybalholm/brotli v1.2.0 // indirect
-	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/fsnotify/fsnotify v1.8.0 // indirect
 	github.com/go-faster/city v1.0.1 // indirect

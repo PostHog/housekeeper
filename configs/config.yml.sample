@@ -1,7 +1,10 @@
 gemini_key: "YOUR_GEMINI_KEY"
+slack:
+  webhook_url: "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
 clickhouse:
   host: "127.0.0.1"
   port: 9000
   user: "default"
   password: "default"
   database: "default"
+  cluster: "default"

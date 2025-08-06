@@ -23,7 +23,14 @@ func main() {
 
 	if len(errors) > 0 {
 		fmt.Println("Errors found:")
-		AnalyzeErrors(errors)
+		summary := AnalyzeErrors(errors)
+		fmt.Println(summary)
+
+		if err := SendSlackMessage(summary, len(errors)); err != nil {
+			log.Printf("Failed to send Slack message: %v", err)
+		}
+	} else {
+		fmt.Println("No errors found in the last hour")
 	}
 
 }

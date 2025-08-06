@@ -51,11 +51,9 @@ func AnalyzeErrors(chErrors CHErrors) string {
 
 	for _, candidate := range resp.Candidates {
 		for _, part := range candidate.Content.Parts {
-			fmt.Printf("%s", part)
 			fullResp = append(fullResp, fmt.Sprintf("%s", part))
 		}
 	}
-	fmt.Println()
 
 	return strings.Join(fullResp, " ")
 }

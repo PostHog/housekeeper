@@ -6,9 +6,8 @@ import (
 	"log"
 	"strings"
 
-	"github.com/google/generative-ai-go/genai"
+	"google.golang.org/genai"
 	"github.com/spf13/viper"
-	"google.golang.org/api/option"
 )
 
 func AnalyzeErrors(chErrors CHErrors) string {
@@ -16,16 +15,18 @@ func AnalyzeErrors(chErrors CHErrors) string {
 
 	apiKey := viper.GetString("gemini_key")
 
-	client, err := genai.NewClient(ctx, option.WithAPIKey(apiKey))
+	client, err := genai.NewClient(ctx, &genai.ClientConfig{
+		APIKey:  apiKey,
+		Backend: genai.BackendGeminiAPI,
+	})
 	if err != nil {
 		log.Fatal("Error creating client:", err)
 	}
-	defer client.Close()
 
-	model := client.GenerativeModel("gemini-1.5-flash")
-
-	model.SetTemperature(0.7)
-	model.SetMaxOutputTokens(1000)
+	config := &genai.GenerateContentConfig{
+		Temperature:     genai.Ptr(float32(0.7)),
+		MaxOutputTokens: 1000,
+	}
 
 	prompt := "Summarize the following ClickHouse errors and prepare the summary for a slack channel message. \n" +
 		"Contents are from system.errors table.\n" +
@@ -44,7 +45,10 @@ func AnalyzeErrors(chErrors CHErrors) string {
 		"Errors are: \n" +
 		chErrors.String()
 
-	resp, err := model.GenerateContent(ctx, genai.Text(prompt))
+	resp, err := client.Models.GenerateContent(ctx, "gemini-1.5-flash",
+		[]*genai.Content{{
+			Parts: []*genai.Part{{Text: prompt}},
+		}}, config)
 	if err != nil {
 		log.Fatal("Error generating content:", err)
 	}

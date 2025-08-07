@@ -60,12 +60,7 @@ func QuerySystemTable(ctx context.Context, conn driver.Conn, args QuerySystemTab
 	query.WriteString("SELECT ")
 
 	if len(args.Columns) > 0 {
-		// Cast all columns to strings to avoid type conversion issues
-		var castColumns []string
-		for _, col := range args.Columns {
-			castColumns = append(castColumns, fmt.Sprintf("toString(%s) AS %s", col, col))
-		}
-		query.WriteString(strings.Join(castColumns, ", "))
+		query.WriteString(strings.Join(args.Columns, ", "))
 	} else {
 		query.WriteString("*")
 	}
@@ -93,24 +88,39 @@ func QuerySystemTable(ctx context.Context, conn driver.Conn, args QuerySystemTab
 
 	for rows.Next() {
 		valuePtrs := make([]interface{}, len(columns))
-
-		// Since we cast everything to string in SQL, scan as strings
-		for i := range columns {
-			var s string
-			valuePtrs[i] = &s
+		
+		// Create typed variables for scanning based on common ClickHouse column patterns
+		for i, col := range columns {
+			switch col {
+			case "query", "metric", "database", "name", "engine", "table":
+				// String columns
+				var s string
+				valuePtrs[i] = &s
+			case "query_duration_ms", "memory_usage", "read_rows", "value", "code":
+				// Numeric columns - use int64 as it's more compatible with ClickHouse
+				var n int64
+				valuePtrs[i] = &n
+			default:
+				// For unknown columns, try string first as it's most flexible
+				var s string
+				valuePtrs[i] = &s
+			}
 		}
-
+		
 		if err := rows.Scan(valuePtrs...); err != nil {
 			return nil, fmt.Errorf("scan error: %w", err)
 		}
 
 		row := make(map[string]interface{})
 		for i, col := range columns {
-			// Convert string pointers back to strings
-			if ptr, ok := valuePtrs[i].(*string); ok {
+			// Dereference the typed pointer to get the actual value
+			switch ptr := valuePtrs[i].(type) {
+			case *string:
 				row[col] = *ptr
-			} else {
-				row[col] = valuePtrs[i]
+			case *int64:
+				row[col] = *ptr
+			default:
+				row[col] = ptr
 			}
 		}
 		results = append(results, row)
@@ -220,6 +230,8 @@ Be brief and focus only on actionable insights.`, chErrors.String())
 					if err := json.Unmarshal(argsJSON, &args); err == nil {
 						results, err := QuerySystemTable(ctx, conn, args)
 						if err != nil {
+							log.Printf("QuerySystemTable error for table %s with columns %v, where %s: %v", 
+								args.Table, args.Columns, args.Where, err)
 							funcResponses = append(funcResponses, genai.Part{
 								FunctionResponse: &genai.FunctionResponse{
 									Name: call.Name,
@@ -314,7 +326,7 @@ STEP 1: First query system.query_log for expensive queries with specific columns
 Use query_clickhouse_system_table with:
 - table: "system.query_log"
 - columns: ["query", "query_duration_ms", "memory_usage", "read_rows"]
-- where: "query_duration_ms > 1000 AND event_time > now() - INTERVAL 1 HOUR"
+- where: "query_duration_ms > 1000 AND event_time > subtractHours(now(), 1)"
 - limit: 5
 
 STEP 2: If no slow queries found, perform general system health checks with specific safe columns:
@@ -369,6 +381,8 @@ Focus on actionable insights that will provide the biggest performance gains.`
 					if err := json.Unmarshal(argsJSON, &args); err == nil {
 						results, err := QuerySystemTable(ctx, conn, args)
 						if err != nil {
+							log.Printf("QuerySystemTable error for table %s with columns %v, where %s: %v", 
+								args.Table, args.Columns, args.Where, err)
 							funcResponses = append(funcResponses, genai.Part{
 								FunctionResponse: &genai.FunctionResponse{
 									Name: call.Name,

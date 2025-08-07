@@ -60,7 +60,12 @@ func QuerySystemTable(ctx context.Context, conn driver.Conn, args QuerySystemTab
 	query.WriteString("SELECT ")
 
 	if len(args.Columns) > 0 {
-		query.WriteString(strings.Join(args.Columns, ", "))
+		// Cast all columns to strings to avoid type conversion issues
+		var castColumns []string
+		for _, col := range args.Columns {
+			castColumns = append(castColumns, fmt.Sprintf("toString(%s) AS %s", col, col))
+		}
+		query.WriteString(strings.Join(castColumns, ", "))
 	} else {
 		query.WriteString("*")
 	}
@@ -89,7 +94,7 @@ func QuerySystemTable(ctx context.Context, conn driver.Conn, args QuerySystemTab
 	for rows.Next() {
 		valuePtrs := make([]interface{}, len(columns))
 
-		// Use string pointers for all values to avoid type conversion issues
+		// Since we cast everything to string in SQL, scan as strings
 		for i := range columns {
 			var s string
 			valuePtrs[i] = &s

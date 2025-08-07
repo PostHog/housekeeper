@@ -150,7 +150,10 @@ Available system tables include but are not limited to:
 
 When analyzing errors, use the query_clickhouse_system_table function to gather relevant context.
 Focus on identifying root causes and patterns.
-Format your final analysis for a Slack channel message using markdown.`
+
+IMPORTANT: Keep your response CONCISE and under 2500 characters total.
+Format your final analysis for a Slack channel message using markdown.
+Prioritize the most critical issues and actionable recommendations.`
 
 	config := &genai.GenerateContentConfig{
 		Temperature:     genai.Ptr(float32(0.7)),
@@ -172,11 +175,13 @@ For example, you might want to check:
 Errors from system.errors table:
 %s
 
-Provide a comprehensive analysis with:
-1. Root cause analysis of critical errors
-2. System health indicators from relevant system tables
-3. Recommended actions
-4. Format for Slack with appropriate urgency indicators`, chErrors.String())
+Provide a CONCISE analysis (under 2500 characters) with:
+1. Top 3 most critical issues
+2. Root cause for each critical issue
+3. Immediate action items
+4. Use Slack markdown formatting with urgency indicators (🔴 critical, 🟡 warning, 🟢 info)
+
+Be brief and focus only on actionable insights.`, chErrors.String())
 
 	chat, err := client.Chats.Create(ctx, "gemini-1.5-flash", config, nil)
 	if err != nil {

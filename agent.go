@@ -309,7 +309,7 @@ STEP 1: First query system.query_log for expensive queries with specific columns
 Use query_clickhouse_system_table with:
 - table: "system.query_log"
 - columns: ["query", "query_duration_ms", "memory_usage", "read_rows"]
-- where: "query_duration_ms > 1000 AND event_time > now() - INTERVAL 24 HOUR"
+- where: "query_duration_ms > 1000 AND event_time > now() - INTERVAL 1 HOUR"
 - limit: 5
 
 STEP 2: If no slow queries found, perform general system health checks with specific safe columns:

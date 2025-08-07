@@ -88,7 +88,7 @@ func QuerySystemTable(ctx context.Context, conn driver.Conn, args QuerySystemTab
 
 	for rows.Next() {
 		valuePtrs := make([]interface{}, len(columns))
-		
+
 		// Create typed variables for scanning based on common ClickHouse column patterns
 		for i, col := range columns {
 			switch col {
@@ -101,7 +101,7 @@ func QuerySystemTable(ctx context.Context, conn driver.Conn, args QuerySystemTab
 				var n uint64
 				valuePtrs[i] = &n
 			case "exception_code", "script_line_number":
-				// These are Int32 in system.query_log  
+				// These are Int32 in system.query_log
 				var n int32
 				valuePtrs[i] = &n
 			case "script_query_number", "revision":
@@ -122,7 +122,7 @@ func QuerySystemTable(ctx context.Context, conn driver.Conn, args QuerySystemTab
 				valuePtrs[i] = &s
 			}
 		}
-		
+
 		if err := rows.Scan(valuePtrs...); err != nil {
 			return nil, fmt.Errorf("scan error: %w", err)
 		}
@@ -252,7 +252,7 @@ Be brief and focus only on actionable insights.`, chErrors.String())
 					if err := json.Unmarshal(argsJSON, &args); err == nil {
 						results, err := QuerySystemTable(ctx, conn, args)
 						if err != nil {
-							log.Printf("QuerySystemTable error for table %s with columns %v, where %s: %v", 
+							log.Printf("QuerySystemTable error for table %s with columns %v, where %s: %v",
 								args.Table, args.Columns, args.Where, err)
 							funcResponses = append(funcResponses, genai.Part{
 								FunctionResponse: &genai.FunctionResponse{
@@ -349,7 +349,7 @@ Use query_clickhouse_system_table with:
 - table: "system.query_log"
 - columns: ["query", "query_duration_ms", "memory_usage", "read_rows"]
 - where: "query_duration_ms > 1000 AND event_time > subtractHours(now(), 1)"
-- limit: 5
+- limit: 10
 
 STEP 2: If no slow queries found, perform general system health checks with specific safe columns:
 For system.metrics, use:
@@ -362,7 +362,13 @@ For system.tables, use:
 - table: "system.tables"
 - columns: ["database", "name", "engine"]
 - where: "database != 'system'"
-- limit: 5
+- limit: 50
+
+For system.columns, use:
+- table: "system.columns"
+- columns: ["database", "table", "name", "type"]
+- where: "database != 'system'"
+- limit: 100
 
 IMPORTANT:
 - Always specify exact column names in the columns array
@@ -403,7 +409,7 @@ Focus on actionable insights that will provide the biggest performance gains.`
 					if err := json.Unmarshal(argsJSON, &args); err == nil {
 						results, err := QuerySystemTable(ctx, conn, args)
 						if err != nil {
-							log.Printf("QuerySystemTable error for table %s with columns %v, where %s: %v", 
+							log.Printf("QuerySystemTable error for table %s with columns %v, where %s: %v",
 								args.Table, args.Columns, args.Where, err)
 							funcResponses = append(funcResponses, genai.Part{
 								FunctionResponse: &genai.FunctionResponse{

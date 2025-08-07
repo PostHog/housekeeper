@@ -147,6 +147,7 @@ Available system tables include but are not limited to:
 - system.query_log: Query execution history
 - system.settings: Current settings values
 - system.clusters: Cluster configuration
+- system.kafka_consumers: Kafka consumer statuses
 
 When analyzing errors, use the query_clickhouse_system_table function to gather relevant context.
 Focus on identifying root causes and patterns.

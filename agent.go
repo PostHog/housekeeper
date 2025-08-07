@@ -87,11 +87,12 @@ func QuerySystemTable(ctx context.Context, conn driver.Conn, args QuerySystemTab
 	var results []map[string]interface{}
 
 	for rows.Next() {
-		values := make([]interface{}, len(columns))
 		valuePtrs := make([]interface{}, len(columns))
 
+		// Use string pointers for all values to avoid type conversion issues
 		for i := range columns {
-			valuePtrs[i] = &values[i]
+			var s string
+			valuePtrs[i] = &s
 		}
 
 		if err := rows.Scan(valuePtrs...); err != nil {
@@ -100,7 +101,12 @@ func QuerySystemTable(ctx context.Context, conn driver.Conn, args QuerySystemTab
 
 		row := make(map[string]interface{})
 		for i, col := range columns {
-			row[col] = values[i]
+			// Convert string pointers back to strings
+			if ptr, ok := valuePtrs[i].(*string); ok {
+				row[col] = *ptr
+			} else {
+				row[col] = valuePtrs[i]
+			}
 		}
 		results = append(results, row)
 	}
@@ -185,6 +191,155 @@ Provide a CONCISE analysis (under 2500 characters) with:
 Be brief and focus only on actionable insights.`, chErrors.String())
 
 	chat, err := client.Chats.Create(ctx, "gemini-1.5-flash", config, nil)
+	if err != nil {
+		log.Fatal("Error creating chat:", err)
+	}
+
+	resp, err := chat.SendMessage(ctx, genai.Part{Text: prompt})
+	if err != nil {
+		log.Fatal("Error sending message:", err)
+	}
+
+	maxIterations := 5
+	for range maxIterations {
+		functionCalls := resp.FunctionCalls()
+		if len(functionCalls) == 0 {
+			break
+		}
+
+		var funcResponses []genai.Part
+		for _, call := range functionCalls {
+			if call.Name == "query_clickhouse_system_table" {
+				var args QuerySystemTableArgs
+				if argsJSON, err := json.Marshal(call.Args); err == nil {
+					if err := json.Unmarshal(argsJSON, &args); err == nil {
+						results, err := QuerySystemTable(ctx, conn, args)
+						if err != nil {
+							funcResponses = append(funcResponses, genai.Part{
+								FunctionResponse: &genai.FunctionResponse{
+									Name: call.Name,
+									Response: map[string]interface{}{
+										"error": err.Error(),
+									},
+								},
+							})
+						} else {
+							funcResponses = append(funcResponses, genai.Part{
+								FunctionResponse: &genai.FunctionResponse{
+									Name: call.Name,
+									Response: map[string]interface{}{
+										"results": results,
+										"count":   len(results),
+									},
+								},
+							})
+						}
+					}
+				}
+			}
+		}
+
+		if len(funcResponses) > 0 {
+			resp, err = chat.SendMessage(ctx, funcResponses...)
+			if err != nil {
+				log.Fatal("Error processing function responses:", err)
+			}
+		}
+	}
+
+	return resp.Text()
+}
+
+func AnalyzeQueryPerformanceWithAgent() string {
+	ctx := context.Background()
+
+	apiKey := viper.GetString("gemini_key")
+
+	client, err := genai.NewClient(ctx, &genai.ClientConfig{
+		APIKey:  apiKey,
+		Backend: genai.BackendGeminiAPI,
+	})
+	if err != nil {
+		log.Fatal("Error creating client:", err)
+	}
+
+	conn, err := connect()
+	if err != nil {
+		log.Fatal("Error connecting to ClickHouse:", err)
+	}
+	defer conn.Close()
+
+	systemPrompt := `You are a ClickHouse database performance analyst specializing in query optimization.
+You have access to query any ClickHouse system table to analyze query performance and identify optimization opportunities.
+Available system tables include but are not limited to:
+- system.query_log: Query execution history with performance metrics
+- system.tables: Table schema information (engine, columns, indexes, etc.)
+- system.columns: Detailed column information for indexing analysis
+- system.parts: Information about parts of MergeTree tables
+- system.metrics: Current system performance metrics
+- system.processes: Currently executing queries
+- system.settings: Current database settings
+- system.merges: Information about merges in progress
+
+Use the query_clickhouse_system_table function to:
+1. Identify recent expensive queries (high duration, memory usage, or rows read)
+2. Analyze table schemas for tables involved in slow queries
+3. Look for missing indexes, poor partitioning, or suboptimal table engines
+4. Check for queries that could benefit from materialized views or projections
+5. Identify inefficient JOIN patterns or WHERE clauses
+
+Focus on actionable performance optimization recommendations.
+
+IMPORTANT: Keep your response CONCISE and under 2500 characters total.
+Format your final analysis for a Slack channel message using markdown.
+Prioritize the most impactful optimization opportunities.`
+
+	config := &genai.GenerateContentConfig{
+		Temperature:     genai.Ptr(float32(0.7)),
+		MaxOutputTokens: 2000,
+		SystemInstruction: &genai.Content{
+			Parts: []*genai.Part{{Text: systemPrompt}},
+		},
+		Tools: []*genai.Tool{querySystemTableTool},
+	}
+
+	prompt := `Analyze recent query performance and identify optimization opportunities.
+
+STEP 1: First query system.query_log for expensive queries with specific columns:
+Use query_clickhouse_system_table with:
+- table: "system.query_log"
+- columns: ["query", "query_duration_ms", "memory_usage", "read_rows"]
+- where: "query_duration_ms > 1000 AND event_time > now() - INTERVAL 24 HOUR"
+- limit: 5
+
+STEP 2: If no slow queries found, perform general system health checks with specific safe columns:
+For system.metrics, use:
+- table: "system.metrics" 
+- columns: ["metric", "value"]
+- where: "metric IN ('Query', 'Merge', 'PartMutation', 'ReplicatedSend')"
+- limit: 10
+
+For system.tables, use:
+- table: "system.tables"
+- columns: ["database", "name", "engine"]
+- where: "database != 'system'"
+- limit: 5
+
+IMPORTANT:
+- Always specify exact column names in the columns array
+- Use simple data types (strings, numbers) to avoid conversion errors
+- If a query fails, try with fewer columns or simpler conditions
+- Focus on actionable insights even with limited data
+
+Provide a CONCISE analysis (under 2500 characters) with:
+1. Query performance summary (slow queries found or system health)
+2. Root cause analysis for any issues found  
+3. Specific optimization recommendations based on actual data
+4. Use Slack markdown formatting with priority indicators (🔴 high impact, 🟡 medium impact, 🟢 low impact)
+
+Focus on actionable insights that will provide the biggest performance gains.`
+
+	chat, err := client.Chats.Create(ctx, "gemini-2.5-flash", config, nil)
 	if err != nil {
 		log.Fatal("Error creating chat:", err)
 	}

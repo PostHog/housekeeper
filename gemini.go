@@ -6,8 +6,8 @@ import (
 	"log"
 	"strings"
 
-	"google.golang.org/genai"
 	"github.com/spf13/viper"
+	"google.golang.org/genai"
 )
 
 func AnalyzeErrors(chErrors CHErrors) string {
@@ -57,7 +57,7 @@ func AnalyzeErrors(chErrors CHErrors) string {
 
 	for _, candidate := range resp.Candidates {
 		for _, part := range candidate.Content.Parts {
-			fullResp = append(fullResp, fmt.Sprintf("%s", part))
+			fullResp = append(fullResp, fmt.Sprintf("%s", part.Text))
 		}
 	}
 

@@ -16,6 +16,7 @@ type QuerySystemTableArgs struct {
 	Table   string   `json:"table"`
 	Columns []string `json:"columns,omitempty"`
 	Where   string   `json:"where,omitempty"`
+	OrderBy string   `json:"order_by,omitempty"`
 	Limit   int      `json:"limit,omitempty"`
 }
 
@@ -41,6 +42,10 @@ var querySystemTableTool = &genai.Tool{
 					"where": {
 						Type:        genai.TypeString,
 						Description: "WHERE clause conditions (without the WHERE keyword)",
+					},
+					"order_by": {
+						Type:        genai.TypeString,
+						Description: "ORDER BY clause (without the ORDER BY keyword, e.g., 'query_duration_ms DESC')",
 					},
 					"limit": {
 						Type:        genai.TypeNumber,
@@ -69,6 +74,10 @@ func QuerySystemTable(ctx context.Context, conn driver.Conn, args QuerySystemTab
 
 	if args.Where != "" {
 		query.WriteString(" WHERE " + args.Where)
+	}
+
+	if args.OrderBy != "" {
+		query.WriteString(" ORDER BY " + args.OrderBy)
 	}
 
 	if args.Limit > 0 {
@@ -349,7 +358,10 @@ Use query_clickhouse_system_table with:
 - table: "system.query_log"
 - columns: ["query", "query_duration_ms", "memory_usage", "read_rows"]
 - where: "query_duration_ms > 1000 AND event_time > subtractHours(now(), 1)"
+- order_by: "query_duration_ms DESC"
 - limit: 10
+
+IMPORTANT: Always use ORDER BY to get the most expensive queries first!
 
 STEP 2: If no slow queries found, perform general system health checks with specific safe columns:
 For system.metrics, use:

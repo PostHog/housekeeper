@@ -96,9 +96,25 @@ func QuerySystemTable(ctx context.Context, conn driver.Conn, args QuerySystemTab
 				// String columns
 				var s string
 				valuePtrs[i] = &s
-			case "query_duration_ms", "memory_usage", "read_rows", "value", "code":
-				// Numeric columns - use int64 as it's more compatible with ClickHouse
+			case "query_duration_ms", "memory_usage", "read_rows", "read_bytes", "written_rows", "written_bytes", "result_rows", "result_bytes", "peak_threads_usage":
+				// These are UInt64 in system.query_log
+				var n uint64
+				valuePtrs[i] = &n
+			case "exception_code", "script_line_number":
+				// These are Int32 in system.query_log  
+				var n int32
+				valuePtrs[i] = &n
+			case "script_query_number", "revision":
+				// These are UInt32 in system.query_log
+				var n uint32
+				valuePtrs[i] = &n
+			case "value":
+				// system.metrics values are typically Int64
 				var n int64
+				valuePtrs[i] = &n
+			case "code":
+				// Generic error codes are typically Int32
+				var n int32
 				valuePtrs[i] = &n
 			default:
 				// For unknown columns, try string first as it's most flexible
@@ -117,7 +133,13 @@ func QuerySystemTable(ctx context.Context, conn driver.Conn, args QuerySystemTab
 			switch ptr := valuePtrs[i].(type) {
 			case *string:
 				row[col] = *ptr
+			case *uint64:
+				row[col] = *ptr
+			case *uint32:
+				row[col] = *ptr
 			case *int64:
+				row[col] = *ptr
+			case *int32:
 				row[col] = *ptr
 			default:
 				row[col] = ptr

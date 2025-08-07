@@ -314,7 +314,7 @@ Use query_clickhouse_system_table with:
 
 STEP 2: If no slow queries found, perform general system health checks with specific safe columns:
 For system.metrics, use:
-- table: "system.metrics" 
+- table: "system.metrics"
 - columns: ["metric", "value"]
 - where: "metric IN ('Query', 'Merge', 'PartMutation', 'ReplicatedSend')"
 - limit: 10
@@ -333,7 +333,7 @@ IMPORTANT:
 
 Provide a CONCISE analysis (under 2500 characters) with:
 1. Query performance summary (slow queries found or system health)
-2. Root cause analysis for any issues found  
+2. Root cause analysis for any issues found
 3. Specific optimization recommendations based on actual data
 4. Use Slack markdown formatting with priority indicators (🔴 high impact, 🟡 medium impact, 🟢 low impact)
 

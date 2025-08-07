@@ -23,7 +23,7 @@ func main() {
 
 	if len(errors) > 0 {
 		fmt.Println("Errors found:")
-		summary := AnalyzeErrors(errors)
+		summary := AnalyzeErrorsWithAgent(errors)
 		fmt.Println(summary)
 
 		if err := SendSlackMessage(summary, len(errors)); err != nil {

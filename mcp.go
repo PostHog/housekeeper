@@ -3,7 +3,9 @@ package main
 import (
     "context"
     "fmt"
+    "reflect"
     "strings"
+    "time"
 
     "github.com/spf13/viper"
 )
@@ -91,27 +93,89 @@ func runClickhouseQuery(a queryArgs) ([]map[string]interface{}, error) {
     }
 	defer rows.Close()
 
-	cols := rows.Columns()
-	results := make([]map[string]interface{}, 0)
-	for rows.Next() {
-		ptrs := make([]interface{}, len(cols))
-		for i := range cols {
-			var s string
-			ptrs[i] = &s
-		}
-		if err := rows.Scan(ptrs...); err != nil {
-			return nil, err
-		}
-		row := make(map[string]interface{}, len(cols))
-		for i, c := range cols {
-			row[c] = *(ptrs[i].(*string))
-		}
-		results = append(results, row)
-	}
+    cols := rows.Columns()
+    colTypes := rows.ColumnTypes()
+    results := make([]map[string]interface{}, 0)
+    for rows.Next() {
+        ptrs := make([]interface{}, len(cols))
+        holders := make([]reflect.Value, len(cols))
+        for i := range cols {
+            st := colTypes[i].ScanType()
+            if st == nil { // fallback to string
+                st = reflect.TypeOf("")
+            }
+            dest := reflect.New(st) // *T for non-nullable, **T for nullable
+            holders[i] = dest
+            ptrs[i] = dest.Interface()
+        }
+        if err := rows.Scan(ptrs...); err != nil {
+            return nil, err
+        }
+        row := make(map[string]interface{}, len(cols))
+        for i, c := range cols {
+            // Extract value considering nullability
+            if colTypes[i].Nullable() {
+                // holders[i] is **T; Elem() => *T
+                vptr := holders[i].Elem()
+                if vptr.IsNil() {
+                    row[c] = nil
+                    continue
+                }
+                base := vptr.Elem().Interface()
+                row[c] = normalizeValue(base)
+            } else {
+                base := holders[i].Elem().Interface() // T
+                row[c] = normalizeValue(base)
+            }
+        }
+        results = append(results, row)
+    }
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	return results, nil
+}
+
+// normalizeValue converts scanned values into JSON-friendly representations
+// while preserving useful numeric types. Unknown types fall back to fmt.Sprint.
+func normalizeValue(v interface{}) interface{} {
+    switch t := v.(type) {
+    case nil:
+        return nil
+    case string:
+        return t
+    case []byte:
+        return string(t)
+    case bool:
+        return t
+    case int, int8, int16, int32, int64:
+        return reflect.ValueOf(t).Int()
+    case uint, uint8, uint16, uint32, uint64:
+        return reflect.ValueOf(t).Uint()
+    case float32, float64:
+        return reflect.ValueOf(t).Float()
+    case time.Time:
+        return t.Format(time.RFC3339Nano)
+    }
+    // Handle slices/arrays generically
+    rv := reflect.ValueOf(v)
+    if rv.IsValid() && (rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array) {
+        n := rv.Len()
+        out := make([]interface{}, n)
+        for i := 0; i < n; i++ {
+            out[i] = normalizeValue(rv.Index(i).Interface())
+        }
+        return out
+    }
+    // Handle maps generically with string keys if possible
+    if rv.IsValid() && rv.Kind() == reflect.Map && rv.Type().Key().Kind() == reflect.String {
+        out := make(map[string]interface{}, rv.Len())
+        for _, key := range rv.MapKeys() {
+            out[key.String()] = normalizeValue(rv.MapIndex(key).Interface())
+        }
+        return out
+    }
+    return fmt.Sprint(v)
 }
 
 // validateFreeformSQL ensures the provided SQL is a single SELECT/WITH query and

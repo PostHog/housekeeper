@@ -16,7 +16,7 @@ func RunMCPServer() error {
     mcp.AddTool[queryArgs, map[string]any](
         srv,
         &mcp.Tool{
-            Name:        "clickhouse.query",
+            Name:        "clickhouse_query",
             Title:       "Query ClickHouse system tables",
             Description: "Read-only queries against ClickHouse system.* via clusterAllReplicas",
             Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},

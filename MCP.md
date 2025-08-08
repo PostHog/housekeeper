@@ -27,9 +27,9 @@ The server uses the official go-sdk and speaks MCP over stdio (JSON-RPC framed w
   - `tools/list`
   - `tools/call`
 
-## Tool: clickhouse.query
+## Tool: clickhouse_query
 
-- Name: `clickhouse.query`
+- Name: `clickhouse_query`
 - Description: Query ClickHouse system tables via `clusterAllReplicas` (read‑only).
 - Arguments:
   - `table` (string, required): e.g., `system.query_log`, `system.metrics`.
@@ -47,7 +47,7 @@ Request:
   "id": 1,
   "method": "tools/call",
   "params": {
-    "name": "clickhouse.query",
+    "name": "clickhouse_query",
     "arguments": {
       "table": "system.query_log",
       "columns": ["query", "query_duration_ms", "memory_usage"],

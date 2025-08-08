@@ -31,12 +31,9 @@ The server uses the official go-sdk and speaks MCP over stdio (JSON-RPC framed w
 
 - Name: `clickhouse_query`
 - Description: Query ClickHouse system tables via `clusterAllReplicas` (read‑only).
-- Arguments:
-  - `table` (string, required): e.g., `system.query_log`, `system.metrics`.
-  - `columns` (string[], optional): selected columns; empty selects `*`.
-  - `where` (string, optional): without the `WHERE` keyword.
-  - `order_by` (string, optional): without `ORDER BY`.
-  - `limit` (number, optional).
+- Arguments (two modes):
+  - Structured: `table` (required, system.*), `columns`[], `where`, `order_by`, `limit`.
+  - Free-form: `sql` (string) — must be a single SELECT/WITH statement referencing only `system.*` tables. Semicolons and write/DDL are rejected.
 
 ## Example tools/call
 
@@ -68,6 +65,22 @@ Response (truncated):
     "content": [
       {"type": "json", "data": {"results": [{"query": "..."}], "count": 10}}
     ]
+  }
+}
+```
+
+### Free-form example
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "tools/call",
+  "params": {
+    "name": "clickhouse_query",
+    "arguments": {
+      "sql": "WITH slow AS (SELECT event_time, query_duration_ms FROM clusterAllReplicas(default, system.query_log) WHERE event_time > subtractHours(now(),1)) SELECT count() AS cnt, quantileExact(0.95)(query_duration_ms) AS p95 FROM slow"
+    }
   }
 }
 ```

@@ -81,17 +81,6 @@ func RunMCPSSEServer(port int) error {
 	})
 
 	mux := http.NewServeMux()
-	// Initialize OAuth (discovery + JWKS) if enabled
-	initOAuth()
-	if viper.GetBool("oauth.enabled") {
-		mux.HandleFunc("/.well-known/openid-configuration", handleWellKnownOIDC)
-		mux.HandleFunc("/.well-known/oauth-authorization-server", handleWellKnownOAuth)
-		mux.HandleFunc("/.well-known/oauth-protected-resource", handleOAuthProtectedResource)
-		mux.HandleFunc("/oauth/jwks", handleJWKS)
-		mux.HandleFunc("/oauth/register", handleClientRegistration)
-		mux.HandleFunc("/oauth/authorize", handleAuthorize)
-		mux.HandleFunc("/oauth/token", handleToken)
-	}
 	// Simple health endpoint
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

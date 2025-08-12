@@ -13,6 +13,7 @@ func main() {
 	performanceMode := flag.Bool("performance", false, "Run query performance analysis instead of error analysis")
 	mcpMode := flag.Bool("mcp", false, "Run MCP stdio server for ClickHouse system table queries")
 	sseMode := flag.Bool("sse", false, "Run MCP HTTP SSE server for ClickHouse system table queries")
+	tsnetMode := flag.Bool("tsnet", false, "Run MCP server on Tailscale network using tsnet")
 	configPath := flag.String("config", "", "Path to YAML config (or set HOUSEKEEPER_CONFIG)")
 	flag.Parse()
 
@@ -40,6 +41,24 @@ func main() {
 		}
 		logrus.WithFields(logrus.Fields{"mode": "sse", "port": port, "config": viper.ConfigFileUsed()}).Info("Starting MCP SSE server")
 		if err := RunMCPSSEServer(port); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+
+	if *tsnetMode {
+		if err := loadConfig(*configPath); err != nil {
+			log.Fatal(err)
+		}
+		if !viper.GetBool("tsnet.enabled") {
+			log.Fatal("tsnet mode requested but tsnet.enabled is false in config")
+		}
+		port := viper.GetInt("sse.port")
+		if port == 0 {
+			port = 3333
+		}
+		logrus.WithFields(logrus.Fields{"mode": "tsnet", "port": port, "config": viper.ConfigFileUsed()}).Info("Starting MCP tsnet server")
+		if err := RunMCPTsnetServer(port); err != nil {
 			log.Fatal(err)
 		}
 		return

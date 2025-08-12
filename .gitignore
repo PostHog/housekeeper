@@ -36,3 +36,4 @@ __debug*
 docker/
 .claude/
 housekeeper
+tsnet-state/

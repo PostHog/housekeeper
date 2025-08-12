@@ -30,17 +30,36 @@ func RunMCPServer() error {
 	return srv.Run(context.Background(), mcp.NewStdioTransport())
 }
 
+type SayHiParams struct {
+	Name string `json:"name"`
+}
+
+func SayHi(ctx context.Context, cc *mcp.ServerSession, params *mcp.CallToolParamsFor[SayHiParams]) (*mcp.CallToolResultFor[any], error) {
+	return &mcp.CallToolResultFor[any]{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: "Hi " + params.Arguments.Name},
+		},
+	}, nil
+}
+
 func RunMCPSSEServer(port int) error {
 	srv := buildMCPServer()
+
+	server1 := mcp.NewServer(&mcp.Implementation{Name: "greeter1"}, nil)
+	mcp.AddTool(server1, &mcp.Tool{Name: "greet1", Description: "say hi"}, SayHi)
+
 	handler := mcp.NewSSEHandler(func(r *http.Request) *mcp.Server {
 		switch r.URL.Path {
 		case "/clickhouse":
 			return srv
+		case "/greeter":
+			return server1
 		default:
 			// should not be reached because mux routes only /clickhouse/sse here
 			return srv
 		}
 	})
+
 	mux := http.NewServeMux()
 	// Simple health endpoint
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -54,7 +73,7 @@ func RunMCPSSEServer(port int) error {
 	errCh := make(chan error, 2)
 
 	go func() {
-		if err := http.ListenAndServe(httpAddr, withRequestLogging(mux)); err != nil {
+		if err := http.ListenAndServe(httpAddr, mux); err != nil {
 			errCh <- err
 		}
 	}()
@@ -70,7 +89,7 @@ func RunMCPSSEServer(port int) error {
 		keyFile := strings.TrimSpace(viper.GetString("sse.tls.key_file"))
 		selfSigned := viper.GetBool("sse.tls.self_signed")
 
-		server := &http.Server{Addr: tlsAddr, Handler: withRequestLogging(mux)}
+		server := &http.Server{Addr: tlsAddr, Handler: mux}
 
 		if certFile != "" && keyFile != "" {
 			logrus.WithFields(logrus.Fields{"addr": tlsAddr, "cert": certFile}).Info("MCP SSE HTTPS server (file cert)")
@@ -93,51 +112,6 @@ func RunMCPSSEServer(port int) error {
 	}
 
 	return <-errCh
-}
-
-// withRequestLogging wraps an http.Handler and logs method, path, query,
-// remote address, status code, bytes written, and duration for every request.
-func withRequestLogging(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		logrus.WithFields(logrus.Fields{
-			"method": r.Method,
-			"path":   r.URL.Path,
-			"query":  r.URL.RawQuery,
-			"remote": r.RemoteAddr,
-			"ua":     r.Header.Get("User-Agent"),
-		}).Info("http_request_start")
-		lw := &loggingResponseWriter{ResponseWriter: w, status: http.StatusOK}
-		next.ServeHTTP(lw, r)
-		dur := time.Since(start)
-		logrus.WithFields(logrus.Fields{
-			"method":   r.Method,
-			"path":     r.URL.Path,
-			"query":    r.URL.RawQuery,
-			"remote":   r.RemoteAddr,
-			"ua":       r.Header.Get("User-Agent"),
-			"status":   lw.status,
-			"bytes":    lw.bytes,
-			"duration": dur.String(),
-		}).Info("http_request_end")
-	})
-}
-
-type loggingResponseWriter struct {
-	http.ResponseWriter
-	status int
-	bytes  int
-}
-
-func (lw *loggingResponseWriter) WriteHeader(code int) {
-	lw.status = code
-	lw.ResponseWriter.WriteHeader(code)
-}
-
-func (lw *loggingResponseWriter) Write(b []byte) (int, error) {
-	n, err := lw.ResponseWriter.Write(b)
-	lw.bytes += n
-	return n, err
 }
 
 func generateSelfSignedCert(hosts []string) (tls.Certificate, error) {

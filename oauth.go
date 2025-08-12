@@ -348,8 +348,21 @@ func handleAuthorize(w http.ResponseWriter, r *http.Request) {
 
 	// Validate redirect_uri
 	validRedirect := false
+	parsedRedirect, err := url.Parse(redirectURI)
+	if err != nil {
+		http.Error(w, "invalid redirect_uri", http.StatusBadRequest)
+		return
+	}
 	for _, uri := range client.RedirectURIs {
-		if uri == redirectURI {
+		parsedRegistered, err := url.Parse(uri)
+		if err != nil {
+			continue // skip malformed registered URIs
+		}
+		// Normalize: compare scheme, host, path, and (if present) port
+		if strings.EqualFold(parsedRegistered.Scheme, parsedRedirect.Scheme) &&
+			strings.EqualFold(parsedRegistered.Host, parsedRedirect.Host) &&
+			parsedRegistered.Path == parsedRedirect.Path &&
+			parsedRegistered.RawQuery == parsedRedirect.RawQuery {
 			validRedirect = true
 			break
 		}

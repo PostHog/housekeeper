@@ -60,7 +60,7 @@ func RunMCPSSEServer(port int) error {
 			return srv
 		}
 	})
-	
+
 	// CORS-enabled handler wrapper
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
@@ -71,12 +71,12 @@ func RunMCPSSEServer(port int) error {
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, Cache-Control")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
-		
+
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		
+
 		sseHandler.ServeHTTP(w, r)
 	})
 

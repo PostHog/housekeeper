@@ -14,7 +14,7 @@ import (
 
 // RunMCPServer starts an MCP stdio server using the official go-sdk.
 func RunMCPServer() error {
-    impl := &mcp.Implementation{Name: "housekeeper-clickhouse-mcp", Title: "Housekeeper ClickHouse", Version: "0.3.0"}
+	impl := &mcp.Implementation{Name: "housekeeper-clickhouse-mcp", Title: "Housekeeper ClickHouse", Version: "0.3.0"}
 	srv := mcp.NewServer(impl, &mcp.ServerOptions{})
 
 	// Initialize Prometheus client
@@ -33,7 +33,8 @@ func RunMCPServer() error {
 		},
 		func(ctx context.Context, ss *mcp.ServerSession, req *mcp.CallToolParamsFor[queryArgs]) (*mcp.CallToolResultFor[map[string]any], error) {
 			qa := req.Arguments
-            if qa.OrderBy == "" { /* tolerate orderBy alias via schema inference not possible here */ }
+			if qa.OrderBy == "" { /* tolerate orderBy alias via schema inference not possible here */
+			}
 			if err := validateQueryArgs(qa); err != nil {
 				return nil, err
 			}

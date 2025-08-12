@@ -17,9 +17,9 @@ type SlackMessage struct {
 }
 
 type SlackBlock struct {
-	Type     string            `json:"type"`
-	Text     *SlackText        `json:"text,omitempty"`
-	Elements []SlackElement    `json:"elements,omitempty"`
+	Type     string         `json:"type"`
+	Text     *SlackText     `json:"text,omitempty"`
+	Elements []SlackElement `json:"elements,omitempty"`
 }
 
 type SlackText struct {
@@ -39,7 +39,7 @@ func SendSlackMessage(summary string, errorCount int) error {
 	}
 
 	timestamp := time.Now().Format("2006-01-02 15:04:05 MST")
-	
+
 	message := SlackMessage{
 		Blocks: []SlackBlock{
 			{
@@ -87,7 +87,7 @@ func SendSlackMessage(summary string, errorCount int) error {
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
-	
+
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("slack API returned status %d: %s", resp.StatusCode, string(body))
 	}

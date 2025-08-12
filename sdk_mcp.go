@@ -43,7 +43,7 @@ func SayHi(ctx context.Context, cc *mcp.ServerSession, params *mcp.CallToolParam
 }
 
 func RunMCPSSEServer(port int) error {
-	srv := buildMCPServer()
+    srv := buildMCPServer()
 
 	server1 := mcp.NewServer(&mcp.Implementation{Name: "greeter1"}, nil)
 	mcp.AddTool(server1, &mcp.Tool{Name: "greet1", Description: "say hi"}, SayHi)
@@ -60,12 +60,19 @@ func RunMCPSSEServer(port int) error {
 		}
 	})
 
-	mux := http.NewServeMux()
-	// Simple health endpoint
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
-	})
+    mux := http.NewServeMux()
+    // Initialize OAuth (discovery + JWKS) if enabled
+    initOAuth()
+    if viper.GetBool("oauth.enabled") {
+        mux.HandleFunc("/.well-known/openid-configuration", handleWellKnownOIDC)
+        mux.HandleFunc("/.well-known/oauth-authorization-server", handleWellKnownOAuth)
+        mux.HandleFunc("/oauth/jwks", handleJWKS)
+    }
+    // Simple health endpoint
+    mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+        w.WriteHeader(http.StatusOK)
+        _, _ = w.Write([]byte("ok"))
+    })
 	mux.Handle("/", handler)
 	httpAddr := fmt.Sprintf(":%d", port)
 	logrus.WithField("addr", httpAddr).Info("MCP SSE HTTP server listening")

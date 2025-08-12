@@ -16,6 +16,9 @@ sse:
     self_signed: true   # generate an in-memory self-signed cert if no cert/key provided
     cert_file: ""       # optional path to TLS cert (PEM)
     key_file: ""        # optional path to TLS key (PEM)
+oauth:
+  enabled: false        # set true to expose discovery + JWKS
+  issuer: ""            # optional; if empty, derived from request (scheme + host)
 log:
   level: info       # debug, info, warn, error
   format: text      # text or json

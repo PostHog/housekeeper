@@ -209,6 +209,11 @@ func buildMCPServer() *mcp.Server {
 		},
 	)
 
+	// Initialize Prometheus client
+	if err := initPrometheus(); err != nil {
+		logrus.WithFields(logrus.Fields{"error": err}).Error("failed to initialize prometheus client")
+	}
+
 	// Register Prometheus tool
 	mcp.AddTool[prometheusArgs, map[string]any](
 		srv,

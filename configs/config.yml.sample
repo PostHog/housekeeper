@@ -8,3 +8,14 @@ clickhouse:
   password: "default"
   database: "default"
   cluster: "default"
+sse:
+  port: 3333
+  tls:
+    enabled: true
+    port: 3443
+    self_signed: true   # generate an in-memory self-signed cert if no cert/key provided
+    cert_file: ""       # optional path to TLS cert (PEM)
+    key_file: ""        # optional path to TLS key (PEM)
+log:
+  level: info       # debug, info, warn, error
+  format: text      # text or json

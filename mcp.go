@@ -8,6 +8,7 @@ import (
     "time"
 
     "github.com/spf13/viper"
+    logrus "github.com/sirupsen/logrus"
 )
 
 // JSON-RPC transport types
@@ -86,6 +87,7 @@ func runClickhouseQuery(a queryArgs) ([]map[string]interface{}, error) {
         query = sb.String()
     }
 
+    logrus.WithField("query", query).Debug("Executing MCP query")
     ctx := context.Background()
     rows, err := conn.Query(ctx, query)
     if err != nil {
@@ -132,8 +134,9 @@ func runClickhouseQuery(a queryArgs) ([]map[string]interface{}, error) {
     }
 	if err := rows.Err(); err != nil {
 		return nil, err
-	}
-	return results, nil
+    }
+    logrus.WithFields(logrus.Fields{"columns": cols, "rows": len(results)}).Debug("MCP query result")
+    return results, nil
 }
 
 // normalizeValue converts scanned values into JSON-friendly representations

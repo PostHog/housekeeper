@@ -7,6 +7,7 @@ toolchain go1.24.5
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.40.1
 	github.com/modelcontextprotocol/go-sdk v0.2.0
+	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/viper v1.20.1
 	google.golang.org/genai v1.19.0
 )

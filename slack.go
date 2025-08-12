@@ -1,15 +1,15 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
-	"fmt"
-	"io"
-	"log"
-	"net/http"
-	"time"
+    "bytes"
+    "encoding/json"
+    "fmt"
+    "io"
+    "net/http"
+    "time"
 
-	"github.com/spf13/viper"
+    "github.com/spf13/viper"
+    logrus "github.com/sirupsen/logrus"
 )
 
 type SlackMessage struct {
@@ -92,6 +92,6 @@ func SendSlackMessage(summary string, errorCount int) error {
 		return fmt.Errorf("slack API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
-	log.Println("Slack message sent successfully")
-	return nil
+    logrus.Info("Slack message sent successfully")
+    return nil
 }

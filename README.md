@@ -62,6 +62,39 @@ clickhouse:
 ./housekeeper -c /path/to/config.yml
 ```
 
+### MCP Server Modes
+
+- Stdio MCP: start an MCP server over stdio for IDE/agent integration.
+
+```bash
+./housekeeper -mcp -config ./configs/config.yml
+```
+
+- SSE MCP (HTTP): start an HTTP server exposing an SSE transport.
+
+```bash
+# Configure port via configs/config.yml (sse.port), default 3333
+./housekeeper -sse -config ./configs/config.yml
+# Endpoints:
+#   GET  /sse       -> establishes SSE stream (server sends an "endpoint" event)
+#   POST <endpoint> -> send client->server JSON-RPC messages
+#   GET  /healthz   -> health check (200 OK)
+# HTTPS: enable self-signed or file-based TLS via sse.tls.* in config
+#   self-signed default port: 3443 (curl with -k)
+```
+
+The MCP server exposes a single tool: `clickhouse_query`.
+
+### Logging
+
+Configure logging in `configs/config.yml`:
+
+```yaml
+log:
+  level: info   # debug, info, warn, error
+  format: json  # json or text
+```
+
 ### Development
 
 ```bash

@@ -85,19 +85,27 @@ Response (truncated):
 }
 ```
 
-## Claude Desktop integration (example)
+## Claude Desktop integration (examples)
 
-Add to your Claude Desktop config:
+Option 1: stdio transport (spawns server process)
 ```json
 {
   "mcpServers": {
     "housekeeper-clickhouse": {
       "command": "/absolute/path/to/housekeeper",
-      "args": ["-mcp"]
-    },
-    "housekeeper-clickhouse-standalone": {
-      "command": "/absolute/path/to/clickhouse-mcp",
-      "args": []
+      "args": ["-mcp", "-config", "/absolute/path/to/config.yml"]
+    }
+  }
+}
+```
+
+Option 2: SSE transport (connects to running server)
+```json
+{
+  "mcpServers": {
+    "housekeeper-clickhouse": {
+      "transport": "sse",
+      "url": "http://localhost:3333/sse"
     }
   }
 }
@@ -107,3 +115,39 @@ Notes:
 - Queries are restricted to `system.*` tables and reject multi‑statement inputs.
 - The server uses `clusterAllReplicas(<cluster>, <system.table>)` for cluster‑wide visibility.
 - If building fails initially, run `go mod tidy` to fetch `github.com/modelcontextprotocol/go-sdk`.
+
+## Running (SSE)
+
+Starts an HTTP server that implements the MCP SSE transport using the go-sdk.
+
+- Start: `./housekeeper -sse -config /absolute/path/to/config.yml`
+- Port: configured via `sse.port` (default `3333`).
+- HTTPS: enable via `sse.tls.enabled: true`; by default a self-signed cert is generated and served on `sse.tls.port` (default `3443`). Provide `sse.tls.cert_file` and `sse.tls.key_file` to use your own certificate.
+- Endpoints:
+  - `GET /sse`: establishes the SSE stream; first event is `endpoint` with the per-session POST URL.
+  - `POST <endpoint>`: send client→server JSON-RPC messages.
+  - `GET /healthz`: health check (200 OK).
+
+Quick test (manual):
+
+```bash
+# 1) Open SSE stream
+curl -N -H 'Accept: text/event-stream' http://localhost:3333/sse
+# You’ll receive an "endpoint" event like: data: /sse?sessionid=abc123
+
+# 2) In another terminal, POST a JSON-RPC message to the session endpoint
+curl -X POST http://localhost:3333/sse?sessionid=abc123 \
+  -H 'Content-Type: application/json' \
+  -d '{
+        "jsonrpc":"2.0",
+        "id":1,
+        "method":"initialize",
+        "params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"0.0.1"}}
+      }'
+
+# HTTPS (self-signed): add -k
+curl -k -N -H 'Accept: text/event-stream' https://localhost:3443/sse
+curl -k -X POST https://localhost:3443/sse?sessionid=abc123 \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}'
+```

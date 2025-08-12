@@ -1,61 +1,81 @@
 package main
 
 import (
-    "flag"
-    "fmt"
-    "log"
+	"flag"
+	"fmt"
+	"log"
 
-    "github.com/spf13/viper"
+	logrus "github.com/sirupsen/logrus"
+	"github.com/spf13/viper"
 )
 
 func main() {
-    performanceMode := flag.Bool("performance", false, "Run query performance analysis instead of error analysis")
-    mcpMode := flag.Bool("mcp", false, "Run MCP stdio server for ClickHouse system table queries")
-    configPath := flag.String("config", "", "Path to YAML config (or set HOUSEKEEPER_CONFIG)")
-    flag.Parse()
+	performanceMode := flag.Bool("performance", false, "Run query performance analysis instead of error analysis")
+	mcpMode := flag.Bool("mcp", false, "Run MCP stdio server for ClickHouse system table queries")
+	sseMode := flag.Bool("sse", false, "Run MCP HTTP SSE server for ClickHouse system table queries")
+	configPath := flag.String("config", "", "Path to YAML config (or set HOUSEKEEPER_CONFIG)")
+	flag.Parse()
 
-    if *mcpMode {
-        if err := loadConfig(*configPath); err != nil {
-            log.Fatal(err)
-        }
-        // Do not print to stdout in MCP mode; stdout is reserved for JSON-RPC
-        if err := RunMCPServer(); err != nil {
-            log.Fatal(err)
-        }
-        return
-    }
+    // Logger configured by config (log.level, log.format) after loadConfig
 
-    fmt.Println("Welcome to housekeeper, an AI CH Cluster Observer 👀")
+	if *mcpMode && !*sseMode {
+		if err := loadConfig(*configPath); err != nil {
+			log.Fatal(err)
+		}
+        logrus.WithFields(logrus.Fields{"mode": "stdio", "config": viper.ConfigFileUsed()}).Info("Starting MCP server")
+		// Do not print to stdout in MCP mode; stdout is reserved for JSON-RPC
+		if err := RunMCPServer(); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 
-    if err := loadConfig(*configPath); err != nil {
-        log.Fatal(err)
-    }
-    apiKey := viper.GetString("gemini_key")
-    if apiKey == "" {
-        log.Fatal("Please set api_key in configs")
-    }
+	if *mcpMode && *sseMode {
+		if err := loadConfig(*configPath); err != nil {
+			log.Fatal(err)
+		}
+		port := viper.GetInt("sse.port")
+		if port == 0 {
+			port = 3333
+		}
+        logrus.WithFields(logrus.Fields{"mode": "sse", "port": port, "config": viper.ConfigFileUsed()}).Info("Starting MCP SSE server")
+		if err := RunMCPSSEServer(port); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 
-    if *performanceMode {
-        fmt.Println("Analyzing query performance...")
-        summary := AnalyzeQueryPerformanceWithAgent()
-        fmt.Println(summary)
-        return
-    }
+	logrus.Info("Welcome to housekeeper, an AI CH Cluster Observer 👀")
 
-    errors, err := CHErrorAnalysis()
-    if err != nil {
-        log.Fatal(err)
-    }
+	if err := loadConfig(*configPath); err != nil {
+		log.Fatal(err)
+	}
+	apiKey := viper.GetString("gemini_key")
+	if apiKey == "" {
+		log.Fatal("Please set api_key in configs")
+	}
 
-    if len(errors) > 0 {
-        fmt.Println("Errors found:")
-        summary := AnalyzeErrorsWithAgent(errors)
-        fmt.Println(summary)
+	if *performanceMode {
+		logrus.Info("Analyzing query performance...")
+		summary := AnalyzeQueryPerformanceWithAgent()
+		fmt.Println(summary)
+		return
+	}
 
-        if err := SendSlackMessage(summary, len(errors)); err != nil {
-            log.Printf("Failed to send Slack message: %v", err)
-        }
-    } else {
-        fmt.Println("No errors found in the last hour")
-    }
+	errors, err := CHErrorAnalysis()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if len(errors) > 0 {
+		logrus.WithField("count", len(errors)).Info("Errors found in last hour")
+		summary := AnalyzeErrorsWithAgent(errors)
+		fmt.Println(summary)
+
+		if err := SendSlackMessage(summary, len(errors)); err != nil {
+			logrus.WithError(err).Warn("Failed to send Slack message")
+		}
+	} else {
+		logrus.Info("No errors found in the last hour")
+	}
 }

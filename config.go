@@ -3,7 +3,10 @@ package main
 import (
     "os"
     "path/filepath"
+    "strings"
+    "time"
 
+    logrus "github.com/sirupsen/logrus"
     "github.com/spf13/viper"
 )
 
@@ -18,7 +21,12 @@ func loadConfig(explicitPath string) error {
 
     if explicitPath != "" {
         viper.SetConfigFile(explicitPath)
-        return viper.ReadInConfig()
+        if err := viper.ReadInConfig(); err != nil {
+            return err
+        }
+        applyLoggingConfig()
+        logrus.WithField("file", viper.ConfigFileUsed()).Info("Loaded config")
+        return nil
     }
 
     viper.SetConfigName("config")
@@ -43,5 +51,32 @@ func loadConfig(explicitPath string) error {
     // System path
     viper.AddConfigPath("/etc/housekeeper")
 
-    return viper.ReadInConfig()
+    if err := viper.ReadInConfig(); err != nil {
+        return err
+    }
+    applyLoggingConfig()
+    logrus.WithField("file", viper.ConfigFileUsed()).Info("Loaded config")
+    return nil
+}
+
+func applyLoggingConfig() {
+    // Level
+    levelStr := strings.ToLower(strings.TrimSpace(viper.GetString("log.level")))
+    if levelStr == "" {
+        levelStr = "info"
+    }
+    if lvl, err := logrus.ParseLevel(levelStr); err == nil {
+        logrus.SetLevel(lvl)
+    } else {
+        logrus.WithError(err).Warn("Invalid log.level; defaulting to info")
+        logrus.SetLevel(logrus.InfoLevel)
+    }
+    // Format
+    formatStr := strings.ToLower(strings.TrimSpace(viper.GetString("log.format")))
+    switch formatStr {
+    case "json":
+        logrus.SetFormatter(&logrus.JSONFormatter{TimestampFormat: time.RFC3339Nano})
+    default:
+        logrus.SetFormatter(&logrus.TextFormatter{FullTimestamp: true})
+    }
 }

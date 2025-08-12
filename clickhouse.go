@@ -53,45 +53,59 @@ func CHErrorAnalysis() ([]CHError, error) {
 
 func connect() (driver.Conn, error) {
 	var (
-		ctx       = context.Background()
-		addr      = viper.GetString("clickhouse.host") + ":" + viper.GetString("clickhouse.port")
-		conn, err = clickhouse.Open(&clickhouse.Options{
-			Addr: []string{addr},
-			Auth: clickhouse.Auth{
-				Database: viper.GetString("clickhouse.database"),
-				Username: viper.GetString("clickhouse.user"),
-				Password: viper.GetString("clickhouse.password"),
-			},
-			TLS: &tls.Config{InsecureSkipVerify: true},
-			ClientInfo: clickhouse.ClientInfo{
-				Products: []struct {
-					Name    string
-					Version string
-				}{
-					{Name: "gemini-go-clickhouse", Version: "0.1"},
-				},
-			},
-			Debugf: func(format string, v ...interface{}) {
-				logrus.Debugf(format, v...)
-			},
-		})
+		ctx  = context.Background()
+		addr = viper.GetString("clickhouse.host") + ":" + viper.GetString("clickhouse.port")
 	)
 
+	options := &clickhouse.Options{
+		Addr: []string{addr},
+		Auth: clickhouse.Auth{
+			Database: viper.GetString("clickhouse.database"),
+			Username: viper.GetString("clickhouse.user"),
+			Password: viper.GetString("clickhouse.password"),
+		},
+		ClientInfo: clickhouse.ClientInfo{
+			Products: []struct {
+				Name    string
+				Version string
+			}{
+				{Name: "gemini-go-clickhouse", Version: "0.1"},
+			},
+		},
+		Debugf: func(format string, v ...interface{}) {
+			logrus.Debugf(format, v...)
+		},
+	}
+
+	tlsEnabled := viper.GetBool("clickhouse.tls.enabled")
+	if tlsEnabled {
+		options.TLS = &tls.Config{
+			InsecureSkipVerify: viper.GetBool("clickhouse.tls.skip_verify"),
+		}
+	}
+
+	conn, err := clickhouse.Open(options)
 	if err != nil {
 		return nil, err
 	}
 
 	if err := conn.Ping(ctx); err != nil {
 		if exception, ok := err.(*clickhouse.Exception); ok {
-			fmt.Printf("Exception [%d] %s \n%s\n", exception.Code, exception.Message, exception.StackTrace)
+			logrus.WithFields(logrus.Fields{
+				"code":       exception.Code,
+				"message":    exception.Message,
+				"stacktrace": exception.StackTrace,
+			}).Error("ClickHouse ping failed with exception")
+		} else {
+			logrus.WithError(err).Error("ClickHouse ping failed")
 		}
 		return nil, err
 	}
 	logrus.WithFields(logrus.Fields{
-		"host":     viper.GetString("clickhouse.host"),
-		"port":     viper.GetString("clickhouse.port"),
-		"database": viper.GetString("clickhouse.database"),
-		"tls":      true,
+		"host":        viper.GetString("clickhouse.host"),
+		"port":        viper.GetString("clickhouse.port"),
+		"database":    viper.GetString("clickhouse.database"),
+		"tls_enabled": tlsEnabled,
 	}).Info("Connected to ClickHouse")
 	return conn, nil
 }

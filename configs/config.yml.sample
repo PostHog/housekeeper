@@ -8,6 +8,9 @@ clickhouse:
   password: "default"
   database: "default"
   cluster: "default"
+  tls:
+    enabled: false          # Set to true to use TLS (port should be 9440 for TLS)
+    skip_verify: true       # Skip TLS certificate verification (for self-signed certs)
 sse:
   port: 3333
   tls:

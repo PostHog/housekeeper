@@ -43,12 +43,13 @@ func SayHi(ctx context.Context, cc *mcp.ServerSession, params *mcp.CallToolParam
 }
 
 func RunMCPSSEServer(port int) error {
-    srv := buildMCPServer()
+	srv := buildMCPServer()
 
 	server1 := mcp.NewServer(&mcp.Implementation{Name: "greeter1"}, nil)
 	mcp.AddTool(server1, &mcp.Tool{Name: "greet1", Description: "say hi"}, SayHi)
 
-	handler := mcp.NewSSEHandler(func(r *http.Request) *mcp.Server {
+	// Wrap the SSE handler with CORS support
+	sseHandler := mcp.NewSSEHandler(func(r *http.Request) *mcp.Server {
 		switch r.URL.Path {
 		case "/clickhouse":
 			return srv
@@ -59,20 +60,43 @@ func RunMCPSSEServer(port int) error {
 			return srv
 		}
 	})
+	
+	// CORS-enabled handler wrapper
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			origin = "*"
+		}
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, Cache-Control")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+		
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		
+		sseHandler.ServeHTTP(w, r)
+	})
 
-    mux := http.NewServeMux()
-    // Initialize OAuth (discovery + JWKS) if enabled
-    initOAuth()
-    if viper.GetBool("oauth.enabled") {
-        mux.HandleFunc("/.well-known/openid-configuration", handleWellKnownOIDC)
-        mux.HandleFunc("/.well-known/oauth-authorization-server", handleWellKnownOAuth)
-        mux.HandleFunc("/oauth/jwks", handleJWKS)
-    }
-    // Simple health endpoint
-    mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-        w.WriteHeader(http.StatusOK)
-        _, _ = w.Write([]byte("ok"))
-    })
+	mux := http.NewServeMux()
+	// Initialize OAuth (discovery + JWKS) if enabled
+	initOAuth()
+	if viper.GetBool("oauth.enabled") {
+		mux.HandleFunc("/.well-known/openid-configuration", handleWellKnownOIDC)
+		mux.HandleFunc("/.well-known/oauth-authorization-server", handleWellKnownOAuth)
+		mux.HandleFunc("/.well-known/oauth-protected-resource", handleOAuthProtectedResource)
+		mux.HandleFunc("/oauth/jwks", handleJWKS)
+		mux.HandleFunc("/oauth/register", handleClientRegistration)
+		mux.HandleFunc("/oauth/authorize", handleAuthorize)
+		mux.HandleFunc("/oauth/token", handleToken)
+	}
+	// Simple health endpoint
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
 	mux.Handle("/", handler)
 	httpAddr := fmt.Sprintf(":%d", port)
 	logrus.WithField("addr", httpAddr).Info("MCP SSE HTTP server listening")
@@ -193,70 +217,70 @@ func buildMCPServer() *mcp.Server {
 	// Initialize Prometheus client
 	if err := initPrometheus(); err != nil {
 		logrus.WithFields(logrus.Fields{"error": err}).Error("failed to initialize prometheus client")
-	}
+	} else {
+		// Register Prometheus tool if Prometheus client is initialized successfully
+		mcp.AddTool[prometheusArgs, map[string]any](
+			srv,
+			&mcp.Tool{
+				Name:        "prometheus_query",
+				Title:       "Query Prometheus metrics",
+				Description: "Execute PromQL queries against Prometheus metrics",
+				Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+			},
+			func(ctx context.Context, ss *mcp.ServerSession, req *mcp.CallToolParamsFor[prometheusArgs]) (*mcp.CallToolResultFor[map[string]any], error) {
+				pa := req.Arguments
 
-	// Register Prometheus tool
-	mcp.AddTool[prometheusArgs, map[string]any](
-		srv,
-		&mcp.Tool{
-			Name:        "prometheus_query",
-			Title:       "Query Prometheus metrics",
-			Description: "Execute PromQL queries against Prometheus metrics",
-			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-		},
-		func(ctx context.Context, ss *mcp.ServerSession, req *mcp.CallToolParamsFor[prometheusArgs]) (*mcp.CallToolResultFor[map[string]any], error) {
-			pa := req.Arguments
-
-			if pa.Query == "" {
-				return nil, fmt.Errorf("query is required")
-			}
-
-			var result interface{}
-			var err error
-
-			start, end, err := validateAndParseTimeRange(pa.Start, pa.End)
-			if err != nil {
-				return nil, err
-			}
-
-			step, err := time.ParseDuration(pa.Step)
-			if err != nil {
-				return nil, fmt.Errorf("invalid step duration: %v", err)
-			}
-
-			result, err = queryPrometheus(pa.Query, start, end, step)
-			if err != nil {
-				return nil, err
-			}
-
-			data := map[string]any{"result": result}
-
-			// Create a simple summary showing the raw values
-			var summary string
-			if resultMap, ok := result.(map[string]interface{}); ok {
-				if lastValues, ok := resultMap["last_values"].([]map[string]interface{}); ok && len(lastValues) > 0 {
-					var parts []string
-					for _, val := range lastValues {
-						metric := val["metric"].(model.Metric)
-						value := val["value"].(model.SampleValue)
-						parts = append(parts, fmt.Sprintf("%v: %v", metric, value))
-					}
-					summary = strings.Join(parts, "\n")
-				} else if raw, ok := resultMap["raw_result"]; ok {
-					summary = fmt.Sprintf("%v", raw)
-				} else {
-					summary = "Query returned data in non-matrix format"
+				if pa.Query == "" {
+					return nil, fmt.Errorf("query is required")
 				}
-			} else {
-				summary = fmt.Sprintf("%v", result)
-			}
 
-			return &mcp.CallToolResultFor[map[string]any]{
-				Content:           []mcp.Content{&mcp.TextContent{Text: summary}},
-				StructuredContent: data,
-			}, nil
-		},
-	)
+				var result interface{}
+				var err error
+
+				start, end, err := validateAndParseTimeRange(pa.Start, pa.End)
+				if err != nil {
+					return nil, err
+				}
+
+				step, err := time.ParseDuration(pa.Step)
+				if err != nil {
+					return nil, fmt.Errorf("invalid step duration: %v", err)
+				}
+
+				result, err = queryPrometheus(pa.Query, start, end, step)
+				if err != nil {
+					return nil, err
+				}
+
+				data := map[string]any{"result": result}
+
+				// Create a simple summary showing the raw values
+				var summary string
+				if resultMap, ok := result.(map[string]interface{}); ok {
+					if lastValues, ok := resultMap["last_values"].([]map[string]interface{}); ok && len(lastValues) > 0 {
+						var parts []string
+						for _, val := range lastValues {
+							metric := val["metric"].(model.Metric)
+							value := val["value"].(model.SampleValue)
+							parts = append(parts, fmt.Sprintf("%v: %v", metric, value))
+						}
+						summary = strings.Join(parts, "\n")
+					} else if raw, ok := resultMap["raw_result"]; ok {
+						summary = fmt.Sprintf("%v", raw)
+					} else {
+						summary = "Query returned data in non-matrix format"
+					}
+				} else {
+					summary = fmt.Sprintf("%v", result)
+				}
+
+				return &mcp.CallToolResultFor[map[string]any]{
+					Content:           []mcp.Content{&mcp.TextContent{Text: summary}},
+					StructuredContent: data,
+				}, nil
+			},
+		)
+	}
 
 	logrus.WithField("tools", []string{"clickhouse_query"}).Info("MCP server initialized")
 	return srv

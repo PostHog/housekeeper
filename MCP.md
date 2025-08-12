@@ -19,6 +19,12 @@ go build -o housekeeper
 - Required keys for ClickHouse: `clickhouse.host`, `clickhouse.port`, `clickhouse.user`, `clickhouse.password`, `clickhouse.database`, `clickhouse.cluster`.
   - The DB user should be read‑only; server enforces queries to `system.*` tables only.
 - Required keys for Prometheus: `prometheus.host`, `prometheus.port`.
+- In our current state, to run the MCP server locally, you need to expose Victoria Metrics from Kubernetes. You can do it with:
+
+```bash
+kubectl port-forward --namespace=monitoring svc/vmcluster-victoria-metrics-cluster-vmselect  8481:8481
+```
+
 
 ## Running (stdio)
 

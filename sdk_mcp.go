@@ -18,6 +18,7 @@ import (
 	"crypto/x509/pkix"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/prometheus/common/model"
 	logrus "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 )
@@ -207,6 +208,70 @@ func buildMCPServer() *mcp.Server {
 			}, nil
 		},
 	)
+
+	// Register Prometheus tool
+	mcp.AddTool[prometheusArgs, map[string]any](
+		srv,
+		&mcp.Tool{
+			Name:        "prometheus_query",
+			Title:       "Query Prometheus metrics",
+			Description: "Execute PromQL queries against Prometheus metrics",
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		},
+		func(ctx context.Context, ss *mcp.ServerSession, req *mcp.CallToolParamsFor[prometheusArgs]) (*mcp.CallToolResultFor[map[string]any], error) {
+			pa := req.Arguments
+
+			if pa.Query == "" {
+				return nil, fmt.Errorf("query is required")
+			}
+
+			var result interface{}
+			var err error
+
+			start, end, err := validateAndParseTimeRange(pa.Start, pa.End)
+			if err != nil {
+				return nil, err
+			}
+
+			step, err := time.ParseDuration(pa.Step)
+			if err != nil {
+				return nil, fmt.Errorf("invalid step duration: %v", err)
+			}
+
+			result, err = queryPrometheus(pa.Query, start, end, step)
+			if err != nil {
+				return nil, err
+			}
+
+			data := map[string]any{"result": result}
+
+			// Create a simple summary showing the raw values
+			var summary string
+			if resultMap, ok := result.(map[string]interface{}); ok {
+				if lastValues, ok := resultMap["last_values"].([]map[string]interface{}); ok && len(lastValues) > 0 {
+					var parts []string
+					for _, val := range lastValues {
+						metric := val["metric"].(model.Metric)
+						value := val["value"].(model.SampleValue)
+						parts = append(parts, fmt.Sprintf("%v: %v", metric, value))
+					}
+					summary = strings.Join(parts, "\n")
+				} else if raw, ok := resultMap["raw_result"]; ok {
+					summary = fmt.Sprintf("%v", raw)
+				} else {
+					summary = "Query returned data in non-matrix format"
+				}
+			} else {
+				summary = fmt.Sprintf("%v", result)
+			}
+
+			return &mcp.CallToolResultFor[map[string]any]{
+				Content:           []mcp.Content{&mcp.TextContent{Text: summary}},
+				StructuredContent: data,
+			}, nil
+		},
+	)
+
 	logrus.WithField("tools", []string{"clickhouse_query"}).Info("MCP server initialized")
 	return srv
 }

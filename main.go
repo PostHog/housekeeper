@@ -16,13 +16,13 @@ func main() {
 	configPath := flag.String("config", "", "Path to YAML config (or set HOUSEKEEPER_CONFIG)")
 	flag.Parse()
 
-    // Logger configured by config (log.level, log.format) after loadConfig
+	// Logger configured by config (log.level, log.format) after loadConfig
 
 	if *mcpMode && !*sseMode {
 		if err := loadConfig(*configPath); err != nil {
 			log.Fatal(err)
 		}
-        logrus.WithFields(logrus.Fields{"mode": "stdio", "config": viper.ConfigFileUsed()}).Info("Starting MCP server")
+		logrus.WithFields(logrus.Fields{"mode": "stdio", "config": viper.ConfigFileUsed()}).Info("Starting MCP server")
 		// Do not print to stdout in MCP mode; stdout is reserved for JSON-RPC
 		if err := RunMCPServer(); err != nil {
 			log.Fatal(err)
@@ -38,7 +38,7 @@ func main() {
 		if port == 0 {
 			port = 3333
 		}
-        logrus.WithFields(logrus.Fields{"mode": "sse", "port": port, "config": viper.ConfigFileUsed()}).Info("Starting MCP SSE server")
+		logrus.WithFields(logrus.Fields{"mode": "sse", "port": port, "config": viper.ConfigFileUsed()}).Info("Starting MCP SSE server")
 		if err := RunMCPSSEServer(port); err != nil {
 			log.Fatal(err)
 		}

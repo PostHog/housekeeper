@@ -1,17 +1,17 @@
 package main
 
 import (
-    "context"
-    "fmt"
-    "log"
-    "strings"
-    "time"
-    "crypto/tls"
+	"context"
+	"crypto/tls"
+	"fmt"
+	"log"
+	"strings"
+	"time"
 
-    "github.com/ClickHouse/clickhouse-go/v2"
-    "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-    "github.com/spf13/viper"
-    logrus "github.com/sirupsen/logrus"
+	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	logrus "github.com/sirupsen/logrus"
+	"github.com/spf13/viper"
 )
 
 type CHErrors []CHError
@@ -41,59 +41,59 @@ func (es *CHErrors) String() string {
 }
 
 func CHErrorAnalysis() ([]CHError, error) {
-    logrus.Info("Connecting to ClickHouse…")
-    conn, err := connect()
-    if err != nil {
-        panic(err)
-    }
+	logrus.Info("Connecting to ClickHouse…")
+	conn, err := connect()
+	if err != nil {
+		panic(err)
+	}
 
 	ctx := context.Background()
 	return getCHErrors(ctx, conn)
 }
 
 func connect() (driver.Conn, error) {
-    var (
-        ctx       = context.Background()
-        addr      = viper.GetString("clickhouse.host") + ":" + viper.GetString("clickhouse.port")
-        conn, err = clickhouse.Open(&clickhouse.Options{
-            Addr: []string{addr},
-            Auth: clickhouse.Auth{
-                Database: viper.GetString("clickhouse.database"),
-                Username: viper.GetString("clickhouse.user"),
-                Password: viper.GetString("clickhouse.password"),
-            },
-            TLS: &tls.Config{InsecureSkipVerify: true},
-            ClientInfo: clickhouse.ClientInfo{
-                Products: []struct {
-                    Name    string
-                    Version string
-                }{
-                    {Name: "gemini-go-clickhouse", Version: "0.1"},
-                },
-            },
-            Debugf: func(format string, v ...interface{}) {
-                logrus.Debugf(format, v...)
-            },
-        })
-    )
+	var (
+		ctx       = context.Background()
+		addr      = viper.GetString("clickhouse.host") + ":" + viper.GetString("clickhouse.port")
+		conn, err = clickhouse.Open(&clickhouse.Options{
+			Addr: []string{addr},
+			Auth: clickhouse.Auth{
+				Database: viper.GetString("clickhouse.database"),
+				Username: viper.GetString("clickhouse.user"),
+				Password: viper.GetString("clickhouse.password"),
+			},
+			TLS: &tls.Config{InsecureSkipVerify: true},
+			ClientInfo: clickhouse.ClientInfo{
+				Products: []struct {
+					Name    string
+					Version string
+				}{
+					{Name: "gemini-go-clickhouse", Version: "0.1"},
+				},
+			},
+			Debugf: func(format string, v ...interface{}) {
+				logrus.Debugf(format, v...)
+			},
+		})
+	)
 
 	if err != nil {
 		return nil, err
 	}
 
-    if err := conn.Ping(ctx); err != nil {
-        if exception, ok := err.(*clickhouse.Exception); ok {
-            fmt.Printf("Exception [%d] %s \n%s\n", exception.Code, exception.Message, exception.StackTrace)
-        }
-        return nil, err
-    }
-    logrus.WithFields(logrus.Fields{
-        "host":     viper.GetString("clickhouse.host"),
-        "port":     viper.GetString("clickhouse.port"),
-        "database": viper.GetString("clickhouse.database"),
-        "tls":      true,
-    }).Info("Connected to ClickHouse")
-    return conn, nil
+	if err := conn.Ping(ctx); err != nil {
+		if exception, ok := err.(*clickhouse.Exception); ok {
+			fmt.Printf("Exception [%d] %s \n%s\n", exception.Code, exception.Message, exception.StackTrace)
+		}
+		return nil, err
+	}
+	logrus.WithFields(logrus.Fields{
+		"host":     viper.GetString("clickhouse.host"),
+		"port":     viper.GetString("clickhouse.port"),
+		"database": viper.GetString("clickhouse.database"),
+		"tls":      true,
+	}).Info("Connected to ClickHouse")
+	return conn, nil
 }
 
 func getCHErrors(ctx context.Context, conn driver.Conn) ([]CHError, error) {
@@ -101,11 +101,11 @@ func getCHErrors(ctx context.Context, conn driver.Conn) ([]CHError, error) {
 	query := "SELECT hostname() hostname, name, code, value, last_error_time, last_error_message, last_error_trace, remote" +
 		" FROM clusterAllReplicas(" + cluster + ", system.errors)" +
 		" WHERE last_error_time > now() - INTERVAL 1 HOUR"
-    logrus.WithField("query", query).Debug("Executing ClickHouse query")
-    rows, err := conn.Query(ctx, query)
-    if err != nil {
-        return nil, err
-    }
+	logrus.WithField("query", query).Debug("Executing ClickHouse query")
+	rows, err := conn.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
 
 	var errors []CHError
 	for rows.Next() {
@@ -125,6 +125,6 @@ func getCHErrors(ctx context.Context, conn driver.Conn) ([]CHError, error) {
 		errors = append(errors, chError)
 	}
 
-    logrus.WithField("count", len(errors)).Info("Retrieved system.errors in last hour")
-    return errors, nil
+	logrus.WithField("count", len(errors)).Info("Retrieved system.errors in last hour")
+	return errors, nil
 }

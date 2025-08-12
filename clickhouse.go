@@ -1,16 +1,16 @@
 package main
 
 import (
-    "context"
-    "fmt"
-    "log"
-    "strings"
-    "time"
-    "crypto/tls"
+	"context"
+	"crypto/tls"
+	"fmt"
+	"log"
+	"strings"
+	"time"
 
-    "github.com/ClickHouse/clickhouse-go/v2"
-    "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-    "github.com/spf13/viper"
+	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/spf13/viper"
 )
 
 type CHErrors []CHError
@@ -51,22 +51,22 @@ func CHErrorAnalysis() ([]CHError, error) {
 }
 
 func connect() (driver.Conn, error) {
-    var (
-        ctx       = context.Background()
-        addr      = viper.GetString("clickhouse.host") + ":" + viper.GetString("clickhouse.port")
-        conn, err = clickhouse.Open(&clickhouse.Options{
-            Addr: []string{addr},
-            Auth: clickhouse.Auth{
-                Database: viper.GetString("clickhouse.database"),
-                Username: viper.GetString("clickhouse.user"),
-                Password: viper.GetString("clickhouse.password"),
-            },
-            TLS: &tls.Config{InsecureSkipVerify: true},
-            ClientInfo: clickhouse.ClientInfo{
-                Products: []struct {
-                    Name    string
-                    Version string
-                }{
+	var (
+		ctx       = context.Background()
+		addr      = viper.GetString("clickhouse.host") + ":" + viper.GetString("clickhouse.port")
+		conn, err = clickhouse.Open(&clickhouse.Options{
+			Addr: []string{addr},
+			Auth: clickhouse.Auth{
+				Database: viper.GetString("clickhouse.database"),
+				Username: viper.GetString("clickhouse.user"),
+				Password: viper.GetString("clickhouse.password"),
+			},
+			TLS: &tls.Config{InsecureSkipVerify: true},
+			ClientInfo: clickhouse.ClientInfo{
+				Products: []struct {
+					Name    string
+					Version string
+				}{
 					{Name: "gemini-go-clickhouse", Version: "0.1"},
 				},
 			},

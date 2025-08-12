@@ -1,6 +1,8 @@
 # ClickHouse MCP Server
 
-This repository includes a minimal MCP (Model Context Protocol) server that exposes a single tool for read‑only queries against ClickHouse system tables.
+This repository includes a minimal MCP (Model Context Protocol) server that exposes tools for:
+1. Read‑only queries against ClickHouse system tables
+2. Querying Prometheus metrics for monitoring and correlation
 
 ## Build
 
@@ -14,8 +16,9 @@ go build -o housekeeper
 
 - Uses `configs/config.yml` (Viper) — copy and edit `configs/config.yml.sample`.
 - You can point to a custom path with `-config /path/to/config.yml` or env `HOUSEKEEPER_CONFIG=/path/to/config.yml`.
-- Required keys: `clickhouse.host`, `clickhouse.port`, `clickhouse.user`, `clickhouse.password`, `clickhouse.database`, `clickhouse.cluster`.
-- The DB user should be read‑only; server enforces queries to `system.*` tables only.
+- Required keys for ClickHouse: `clickhouse.host`, `clickhouse.port`, `clickhouse.user`, `clickhouse.password`, `clickhouse.database`, `clickhouse.cluster`.
+  - The DB user should be read‑only; server enforces queries to `system.*` tables only.
+- Required keys for Prometheus: `prometheus.host`, `prometheus.port`.
 
 ## Running (stdio)
 
@@ -27,13 +30,25 @@ The server uses the official go-sdk and speaks MCP over stdio (JSON-RPC framed w
   - `tools/list`
   - `tools/call`
 
-## Tool: clickhouse_query
+## Tools
+
+### Tool: clickhouse_query
 
 - Name: `clickhouse_query`
 - Description: Query ClickHouse system tables via `clusterAllReplicas` (read‑only).
 - Arguments (two modes):
   - Structured: `table` (required, system.*), `columns`[], `where`, `order_by`, `limit`.
   - Free-form: `sql` (string) — must be a single SELECT/WITH statement referencing only `system.*` tables. Semicolons and write/DDL are rejected.
+
+### Tool: prometheus_query
+
+- Name: `prometheus_query`
+- Description: Execute PromQL queries against Prometheus metrics.
+- Arguments:
+  - `query` (required): PromQL query string
+  - `start` (optional): Start time in RFC3339 format or relative time (e.g. "-1h")
+  - `end` (optional): End time in RFC3339 format or relative time (e.g. "-1h")
+  - `step` (optional): Step duration (e.g. "15s", "1m", "1h") (default: "1m")
 
 ## Example tools/call
 
@@ -69,7 +84,7 @@ Response (truncated):
 }
 ```
 
-### Free-form example
+### Free-form example (ClickHouse)
 
 ```json
 {
@@ -80,6 +95,25 @@ Response (truncated):
     "name": "clickhouse_query",
     "arguments": {
       "sql": "WITH slow AS (SELECT event_time, query_duration_ms FROM clusterAllReplicas(default, system.query_log) WHERE event_time > subtractHours(now(),1)) SELECT count() AS cnt, quantileExact(0.95)(query_duration_ms) AS p95 FROM slow"
+    }
+  }
+}
+```
+
+### Prometheus example (range query)
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "tools/call",
+  "params": {
+    "name": "prometheus_query",
+    "arguments": {
+      "query": "rate(clickhouse_query_duration_ms_sum[5m])",
+      "start": "-1h",
+      "end": "-10m",
+      "step": "1m"
     }
   }
 }

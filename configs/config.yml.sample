@@ -8,3 +8,10 @@ clickhouse:
   password: "default"
   database: "default"
   cluster: "default"
+prometheus:
+  host: "localhost"
+  port: 8481
+  # VictoriaMetrics cluster mode settings
+  vm_cluster_mode: false  # Set to true for VM cluster mode
+  vm_tenant_id: "0"      # Tenant ID for VM cluster mode
+  vm_path_prefix: ""     # Optional path prefix (e.g. "prometheus" for VM)

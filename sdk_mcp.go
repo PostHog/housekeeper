@@ -2,27 +2,195 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"math"
+	"math/big"
+	"net"
+	"net/http"
 	"sort"
 	"strings"
 	"time"
 
+	"crypto/x509/pkix"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/prometheus/common/model"
+	logrus "github.com/sirupsen/logrus"
+	"github.com/spf13/viper"
 )
 
 // RunMCPServer starts an MCP stdio server using the official go-sdk.
 func RunMCPServer() error {
-	impl := &mcp.Implementation{Name: "housekeeper-clickhouse-mcp", Title: "Housekeeper ClickHouse", Version: "0.3.0"}
-	srv := mcp.NewServer(impl, &mcp.ServerOptions{})
+	srv := buildMCPServer()
+	logrus.Info("MCP stdio server ready")
+	return srv.Run(context.Background(), mcp.NewStdioTransport())
+}
 
-	// Initialize Prometheus client
-	if err := initPrometheus(); err != nil {
-		return fmt.Errorf("failed to initialize prometheus client: %v", err)
+type SayHiParams struct {
+	Name string `json:"name"`
+}
+
+func SayHi(ctx context.Context, cc *mcp.ServerSession, params *mcp.CallToolParamsFor[SayHiParams]) (*mcp.CallToolResultFor[any], error) {
+	return &mcp.CallToolResultFor[any]{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: "Hi " + params.Arguments.Name},
+		},
+	}, nil
+}
+
+func RunMCPSSEServer(port int) error {
+	srv := buildMCPServer()
+
+	server1 := mcp.NewServer(&mcp.Implementation{Name: "greeter1"}, nil)
+	mcp.AddTool(server1, &mcp.Tool{Name: "greet1", Description: "say hi"}, SayHi)
+
+	// Wrap the SSE handler with CORS support
+	sseHandler := mcp.NewSSEHandler(func(r *http.Request) *mcp.Server {
+		switch r.URL.Path {
+		case "/clickhouse":
+			return srv
+		case "/greeter":
+			return server1
+		default:
+			// should not be reached because mux routes only /clickhouse/sse here
+			return srv
+		}
+	})
+
+	// CORS-enabled handler wrapper
+	corsHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			origin = "*"
+		}
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, Cache-Control, mcp-protocol-version")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		sseHandler.ServeHTTP(w, r)
+	})
+	
+	mux := http.NewServeMux()
+	// Initialize OAuth (discovery + JWKS) if enabled
+	initOAuth()
+	if viper.GetBool("oauth.enabled") {
+		mux.HandleFunc("/.well-known/openid-configuration", oauthLoggingMiddleware(handleWellKnownOIDC))
+		mux.HandleFunc("/.well-known/oauth-authorization-server", oauthLoggingMiddleware(handleWellKnownOAuth))
+		mux.HandleFunc("/.well-known/oauth-protected-resource", oauthLoggingMiddleware(handleOAuthProtectedResource))
+		mux.HandleFunc("/oauth/jwks", oauthLoggingMiddleware(handleJWKS))
+		mux.HandleFunc("/oauth/register", oauthLoggingMiddleware(handleClientRegistration))
+		mux.HandleFunc("/oauth/authorize", oauthLoggingMiddleware(handleAuthorize))
+		mux.HandleFunc("/oauth/token", oauthLoggingMiddleware(handleToken))
+		
+		// Google OAuth endpoints if enabled
+		initGoogleOAuth()
+		if viper.GetBool("oauth.google.enabled") {
+			mux.HandleFunc("/oauth/login/google", oauthLoggingMiddleware(handleGoogleLogin))
+			mux.HandleFunc("/oauth/callback/google", oauthLoggingMiddleware(handleGoogleCallback))
+		}
+	}
+	// Simple health endpoint
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+	
+	// Use the SSE auth handler wrapper for proper OAuth challenges
+	mux.Handle("/", sseAuthHandler(corsHandler))
+	httpAddr := fmt.Sprintf(":%d", port)
+	logrus.WithField("addr", httpAddr).Info("MCP SSE HTTP server listening")
+
+	errCh := make(chan error, 2)
+
+	// Apply logging middleware to the entire mux
+	loggedMux := loggingMiddleware(mux)
+
+	go func() {
+		if err := http.ListenAndServe(httpAddr, loggedMux); err != nil {
+			errCh <- err
+		}
+	}()
+
+	if viper.GetBool("sse.tls.enabled") {
+		tlsPort := viper.GetInt("sse.tls.port")
+		if tlsPort == 0 {
+			tlsPort = 3443
+		}
+		tlsAddr := fmt.Sprintf(":%d", tlsPort)
+
+		certFile := strings.TrimSpace(viper.GetString("sse.tls.cert_file"))
+		keyFile := strings.TrimSpace(viper.GetString("sse.tls.key_file"))
+		selfSigned := viper.GetBool("sse.tls.self_signed")
+
+		server := &http.Server{Addr: tlsAddr, Handler: loggedMux}
+
+		if certFile != "" && keyFile != "" {
+			logrus.WithFields(logrus.Fields{"addr": tlsAddr, "cert": certFile}).Info("MCP SSE HTTPS server (file cert)")
+			go func() { errCh <- server.ListenAndServeTLS(certFile, keyFile) }()
+		} else if selfSigned {
+			cert, err := generateSelfSignedCert([]string{"localhost"})
+			if err != nil {
+				logrus.WithError(err).Error("failed to generate self-signed cert")
+			} else {
+				server.TLSConfig = &tls.Config{Certificates: []tls.Certificate{cert}}
+				logrus.WithField("addr", tlsAddr).Info("MCP SSE HTTPS server (self-signed)")
+				ln, err := net.Listen("tcp", tlsAddr)
+				if err != nil {
+					errCh <- err
+				} else {
+					go func() { errCh <- server.ServeTLS(ln, "", "") }()
+				}
+			}
+		}
 	}
 
-	// Register ClickHouse tool with inferred input schema (from queryArgs)
+	return <-errCh
+}
+
+func generateSelfSignedCert(hosts []string) (tls.Certificate, error) {
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	serial, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	tmpl := x509.Certificate{
+		SerialNumber:          serial,
+		Subject:               pkix.Name{CommonName: "housekeeper-mcp-sse"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(365 * 24 * time.Hour),
+		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	for _, h := range hosts {
+		if ip := net.ParseIP(h); ip != nil {
+			tmpl.IPAddresses = append(tmpl.IPAddresses, ip)
+		} else {
+			tmpl.DNSNames = append(tmpl.DNSNames, h)
+		}
+	}
+	derBytes, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &priv.PublicKey, priv)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	cert := tls.Certificate{Certificate: [][]byte{derBytes}, PrivateKey: priv}
+	return cert, nil
+}
+
+func buildMCPServer() *mcp.Server {
+	impl := &mcp.Implementation{Name: "housekeeper-clickhouse-mcp", Title: "Housekeeper ClickHouse", Version: "0.3.0"}
+	srv := mcp.NewServer(impl, &mcp.ServerOptions{})
 	mcp.AddTool[queryArgs, map[string]any](
 		srv,
 		&mcp.Tool{
@@ -33,8 +201,14 @@ func RunMCPServer() error {
 		},
 		func(ctx context.Context, ss *mcp.ServerSession, req *mcp.CallToolParamsFor[queryArgs]) (*mcp.CallToolResultFor[map[string]any], error) {
 			qa := req.Arguments
-			if qa.OrderBy == "" { /* tolerate orderBy alias via schema inference not possible here */
+			if qa.OrderBy == "" { /* alias tolerated */
 			}
+			logrus.WithFields(logrus.Fields{"mode": func() string {
+				if strings.TrimSpace(qa.SQL) != "" {
+					return "sql"
+				}
+				return "structured"
+			}(), "table": qa.Table}).Info("clickhouse_query invoked")
 			if err := validateQueryArgs(qa); err != nil {
 				return nil, err
 			}
@@ -42,8 +216,8 @@ func RunMCPServer() error {
 			if err != nil {
 				return nil, err
 			}
+			logrus.WithField("rows", len(rows)).Info("clickhouse_query completed")
 			data := map[string]any{"results": rows, "count": len(rows)}
-			// Produce a concise, useful text summary for the LLM/UI
 			summary := summarizeRows(rows)
 			return &mcp.CallToolResultFor[map[string]any]{
 				Content:           []mcp.Content{&mcp.TextContent{Text: summary}},
@@ -52,70 +226,76 @@ func RunMCPServer() error {
 		},
 	)
 
-	// Register Prometheus tool
-	mcp.AddTool[prometheusArgs, map[string]any](
-		srv,
-		&mcp.Tool{
-			Name:        "prometheus_query",
-			Title:       "Query Prometheus metrics",
-			Description: "Execute PromQL queries against Prometheus metrics",
-			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-		},
-		func(ctx context.Context, ss *mcp.ServerSession, req *mcp.CallToolParamsFor[prometheusArgs]) (*mcp.CallToolResultFor[map[string]any], error) {
-			pa := req.Arguments
+	// Initialize Prometheus client
+	if err := initPrometheus(); err != nil {
+		logrus.WithFields(logrus.Fields{"error": err}).Error("failed to initialize prometheus client")
+	} else {
+		// Register Prometheus tool if Prometheus client is initialized successfully
+		mcp.AddTool[prometheusArgs, map[string]any](
+			srv,
+			&mcp.Tool{
+				Name:        "prometheus_query",
+				Title:       "Query Prometheus metrics",
+				Description: "Execute PromQL queries against Prometheus metrics",
+				Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+			},
+			func(ctx context.Context, ss *mcp.ServerSession, req *mcp.CallToolParamsFor[prometheusArgs]) (*mcp.CallToolResultFor[map[string]any], error) {
+				pa := req.Arguments
 
-			if pa.Query == "" {
-				return nil, fmt.Errorf("query is required")
-			}
-
-			var result interface{}
-			var err error
-
-			start, end, err := validateAndParseTimeRange(pa.Start, pa.End)
-			if err != nil {
-				return nil, err
-			}
-
-			step, err := time.ParseDuration(pa.Step)
-			if err != nil {
-				return nil, fmt.Errorf("invalid step duration: %v", err)
-			}
-
-			result, err = queryPrometheus(pa.Query, start, end, step)
-			if err != nil {
-				return nil, err
-			}
-
-			data := map[string]any{"result": result}
-
-			// Create a simple summary showing the raw values
-			var summary string
-			if resultMap, ok := result.(map[string]interface{}); ok {
-				if lastValues, ok := resultMap["last_values"].([]map[string]interface{}); ok && len(lastValues) > 0 {
-					var parts []string
-					for _, val := range lastValues {
-						metric := val["metric"].(model.Metric)
-						value := val["value"].(model.SampleValue)
-						parts = append(parts, fmt.Sprintf("%v: %v", metric, value))
-					}
-					summary = strings.Join(parts, "\n")
-				} else if raw, ok := resultMap["raw_result"]; ok {
-					summary = fmt.Sprintf("%v", raw)
-				} else {
-					summary = "Query returned data in non-matrix format"
+				if pa.Query == "" {
+					return nil, fmt.Errorf("query is required")
 				}
-			} else {
-				summary = fmt.Sprintf("%v", result)
-			}
 
-			return &mcp.CallToolResultFor[map[string]any]{
-				Content:           []mcp.Content{&mcp.TextContent{Text: summary}},
-				StructuredContent: data,
-			}, nil
-		},
-	)
+				var result interface{}
+				var err error
 
-	return srv.Run(context.Background(), mcp.NewStdioTransport())
+				start, end, err := validateAndParseTimeRange(pa.Start, pa.End)
+				if err != nil {
+					return nil, err
+				}
+
+				step, err := time.ParseDuration(pa.Step)
+				if err != nil {
+					return nil, fmt.Errorf("invalid step duration: %v", err)
+				}
+
+				result, err = queryPrometheus(pa.Query, start, end, step)
+				if err != nil {
+					return nil, err
+				}
+
+				data := map[string]any{"result": result}
+
+				// Create a simple summary showing the raw values
+				var summary string
+				if resultMap, ok := result.(map[string]interface{}); ok {
+					if lastValues, ok := resultMap["last_values"].([]map[string]interface{}); ok && len(lastValues) > 0 {
+						var parts []string
+						for _, val := range lastValues {
+							metric := val["metric"].(model.Metric)
+							value := val["value"].(model.SampleValue)
+							parts = append(parts, fmt.Sprintf("%v: %v", metric, value))
+						}
+						summary = strings.Join(parts, "\n")
+					} else if raw, ok := resultMap["raw_result"]; ok {
+						summary = fmt.Sprintf("%v", raw)
+					} else {
+						summary = "Query returned data in non-matrix format"
+					}
+				} else {
+					summary = fmt.Sprintf("%v", result)
+				}
+
+				return &mcp.CallToolResultFor[map[string]any]{
+					Content:           []mcp.Content{&mcp.TextContent{Text: summary}},
+					StructuredContent: data,
+				}, nil
+			},
+		)
+	}
+
+	logrus.WithField("tools", []string{"clickhouse_query"}).Info("MCP server initialized")
+	return srv
 }
 
 // summarizeRows renders a compact, human-friendly summary of results.

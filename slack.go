@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"time"
 
+	logrus "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 )
 
@@ -92,6 +92,6 @@ func SendSlackMessage(summary string, errorCount int) error {
 		return fmt.Errorf("slack API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
-	log.Println("Slack message sent successfully")
+	logrus.Info("Slack message sent successfully")
 	return nil
 }

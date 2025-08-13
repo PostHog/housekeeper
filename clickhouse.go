@@ -4,12 +4,12 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 )
 
@@ -40,10 +40,10 @@ func (es *CHErrors) String() string {
 }
 
 func CHErrorAnalysis() ([]CHError, error) {
-	fmt.Println("Connecting to ClickHouse...")
+	logrus.Debug("Connecting to ClickHouse for error analysis")
 	conn, err := connect()
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 
 	ctx := context.Background()
@@ -71,7 +71,7 @@ func connect() (driver.Conn, error) {
 				},
 			},
 			Debugf: func(format string, v ...interface{}) {
-				fmt.Printf(format, v)
+				logrus.Debugf(format, v...)
 			},
 		})
 	)
@@ -80,12 +80,24 @@ func connect() (driver.Conn, error) {
 		return nil, err
 	}
 
+	logrus.WithFields(logrus.Fields{
+		"host":     viper.GetString("clickhouse.host"),
+		"port":     viper.GetString("clickhouse.port"),
+		"database": viper.GetString("clickhouse.database"),
+		"user":     viper.GetString("clickhouse.user"),
+	}).Debug("Attempting to connect to ClickHouse")
+
 	if err := conn.Ping(ctx); err != nil {
 		if exception, ok := err.(*clickhouse.Exception); ok {
-			fmt.Printf("Exception [%d] %s \n%s\n", exception.Code, exception.Message, exception.StackTrace)
+			logrus.WithFields(logrus.Fields{
+				"code":       exception.Code,
+				"message":    exception.Message,
+				"stacktrace": exception.StackTrace,
+			}).Error("ClickHouse exception occurred")
 		}
 		return nil, err
 	}
+	logrus.Debug("Successfully connected to ClickHouse")
 	return conn, nil
 }
 
@@ -94,6 +106,12 @@ func getCHErrors(ctx context.Context, conn driver.Conn) ([]CHError, error) {
 	query := "SELECT hostname() hostname, name, code, value, last_error_time, last_error_message, last_error_trace, remote" +
 		" FROM clusterAllReplicas(" + cluster + ", system.errors)" +
 		" WHERE last_error_time > now() - INTERVAL 1 HOUR"
+	
+	logrus.WithFields(logrus.Fields{
+		"cluster": cluster,
+		"query":   query,
+	}).Debug("Executing error analysis query")
+	
 	rows, err := conn.Query(ctx, query)
 	if err != nil {
 		return nil, err
@@ -112,10 +130,12 @@ func getCHErrors(ctx context.Context, conn driver.Conn) ([]CHError, error) {
 			&chError.LastErrorTrace,
 			&chError.Remote,
 		); err != nil {
-			log.Fatal(err)
+			logrus.WithError(err).Error("Failed to scan error row")
+			return nil, err
 		}
 		errors = append(errors, chError)
 	}
 
+	logrus.WithField("error_count", len(errors)).Debug("Completed fetching ClickHouse errors")
 	return errors, nil
 }

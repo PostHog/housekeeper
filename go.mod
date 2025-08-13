@@ -1,4 +1,4 @@
-module github.com/posthog/housekeeper
+module github.com/PostHog/housekeeper
 
 go 1.23.0
 

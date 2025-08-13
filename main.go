@@ -52,6 +52,7 @@ func main() {
 		if err := loadConfig(*configPath); err != nil {
 			// Only log debug message if config file wasn't found
 			logrus.WithError(err).Debug("Config file not found, using command-line flags")
+
 		}
 		// Do not print to stdout in MCP mode; stdout is reserved for JSON-RPC
 		logrus.Info("Starting MCP server")

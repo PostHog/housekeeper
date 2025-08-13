@@ -4,22 +4,72 @@ This repository includes a minimal MCP (Model Context Protocol) server that expo
 1. Read‑only queries against ClickHouse system tables
 2. Querying Prometheus metrics for monitoring and correlation
 
-## Build
+## Installation
+
+### Option 1: Install via go install (Recommended)
 
 ```bash
+# Install the latest version directly from GitHub
+go install github.com/PostHog/housekeeper@latest
+
+# The binary will be installed to $GOPATH/bin/housekeeper
+# Make sure $GOPATH/bin is in your PATH
+```
+
+### Option 2: Build from source
+
+```bash
+# Clone the repository
+git clone https://github.com/PostHog/housekeeper.git
+cd housekeeper
+
 # Build integrated binary
 go build -o housekeeper
-
 ```
 
 ## Configuration
+
+### Option 1: Command-line flags (Recommended for MCP)
+
+You can configure the server entirely via command-line flags, making it easy to use without config files:
+
+```bash
+# ClickHouse flags
+housekeeper --mcp \
+  --ch-host "127.0.0.1" \
+  --ch-port 9000 \
+  --ch-user "default" \
+  --ch-password "your-password" \
+  --ch-database "default" \
+  --ch-cluster "default" \
+  --prom-host "localhost" \
+  --prom-port 8481
+```
+
+Available flags:
+- `--ch-host`: ClickHouse host (default: "127.0.0.1")
+- `--ch-port`: ClickHouse port (default: 9000)
+- `--ch-user`: ClickHouse user (default: "default")
+- `--ch-password`: ClickHouse password (default: "")
+- `--ch-database`: ClickHouse database (default: "default")
+- `--ch-cluster`: ClickHouse cluster name (default: "default")
+- `--prom-host`: Prometheus/Victoria Metrics host (default: "localhost")
+- `--prom-port`: Prometheus/Victoria Metrics port (default: 8481)
+- `--prom-vm-cluster`: Enable Victoria Metrics cluster mode (default: false)
+- `--prom-vm-tenant`: Victoria Metrics tenant ID (default: "0")
+- `--prom-vm-prefix`: Victoria Metrics path prefix (default: "")
+
+### Option 2: Configuration file
 
 - Uses `configs/config.yml` (Viper) — copy and edit `configs/config.yml.sample`.
 - You can point to a custom path with `-config /path/to/config.yml` or env `HOUSEKEEPER_CONFIG=/path/to/config.yml`.
 - Required keys for ClickHouse: `clickhouse.host`, `clickhouse.port`, `clickhouse.user`, `clickhouse.password`, `clickhouse.database`, `clickhouse.cluster`.
   - The DB user should be read‑only; server enforces queries to `system.*` tables only.
 - Required keys for Prometheus: `prometheus.host`, `prometheus.port`.
-- In our current state, to run the MCP server locally, you need to expose Victoria Metrics from Kubernetes. You can do it with:
+
+### Victoria Metrics from Kubernetes
+
+If you need to expose Victoria Metrics from Kubernetes locally:
 
 ```bash
 kubectl port-forward --namespace=monitoring svc/vmcluster-victoria-metrics-cluster-vmselect  8481:8481
@@ -125,25 +175,84 @@ Response (truncated):
 }
 ```
 
-## Claude Desktop integration (example)
+## Claude Desktop Integration
 
-Add to your Claude Desktop config:
+### Quick Setup (After go install)
+
+1. Install the housekeeper binary:
+```bash
+go install github.com/PostHog/housekeeper@latest
+```
+
+2. Find your Claude Desktop config file:
+   - macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+   - Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+   - Linux: `~/.config/claude/claude_desktop_config.json`
+
+3. Add to your Claude Desktop config:
+
 ```json
 {
   "mcpServers": {
-    "housekeeper-clickhouse": {
-      "command": "/absolute/path/to/housekeeper",
-      "args": ["-mcp"]
-    },
-    "housekeeper-clickhouse-standalone": {
-      "command": "/absolute/path/to/clickhouse-mcp",
-      "args": []
+    "clickhouse-local": {
+      "command": "housekeeper",
+      "args": [
+        "--mcp",
+        "--ch-host", "127.0.0.1",
+        "--ch-port", "9000",
+        "--ch-user", "default",
+        "--ch-password", "your-password",
+        "--ch-database", "default",
+        "--ch-cluster", "default",
+        "--prom-host", "localhost",
+        "--prom-port", "8481"
+      ]
     }
   }
 }
 ```
 
-Notes:
+### Alternative: Using absolute path
+
+If `housekeeper` is not in your PATH, use the absolute path:
+
+```json
+{
+  "mcpServers": {
+    "clickhouse-local": {
+      "command": "/Users/yourusername/go/bin/housekeeper",
+      "args": [
+        "--mcp",
+        "--ch-host", "127.0.0.1",
+        "--ch-port", "9000",
+        "--ch-user", "default",
+        "--ch-password", "your-password"
+      ]
+    }
+  }
+}
+```
+
+### Using with config file
+
+If you prefer using a config file:
+
+```json
+{
+  "mcpServers": {
+    "clickhouse-prod": {
+      "command": "housekeeper",
+      "args": ["--mcp", "--config", "/path/to/your/config.yml"]
+    }
+  }
+}
+```
+
+4. Restart Claude Desktop for the changes to take effect.
+
+## Notes
+
 - Queries are restricted to `system.*` tables and reject multi‑statement inputs.
 - The server uses `clusterAllReplicas(<cluster>, <system.table>)` for cluster‑wide visibility.
 - If building fails initially, run `go mod tidy` to fetch `github.com/modelcontextprotocol/go-sdk`.
+- The DB user should be read‑only for security.

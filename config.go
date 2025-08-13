@@ -11,7 +11,26 @@ import (
 
 // loadConfig loads configuration from an explicit path if provided, otherwise
 // searches several conventional locations to work when launched by external hosts (e.g., MCP clients).
+// Note: Command-line flags bound to viper will override config file values
 func loadConfig(explicitPath string) error {
+	// Set defaults for all configuration values
+	// These can be overridden by config file or command-line flags
+	viper.SetDefault("clickhouse.host", "127.0.0.1")
+	viper.SetDefault("clickhouse.port", 9000)
+	viper.SetDefault("clickhouse.user", "default")
+	viper.SetDefault("clickhouse.password", "")
+	viper.SetDefault("clickhouse.database", "default")
+	viper.SetDefault("clickhouse.cluster", "default")
+	
+	viper.SetDefault("prometheus.host", "localhost")
+	viper.SetDefault("prometheus.port", 8481)
+	viper.SetDefault("prometheus.vm_cluster_mode", false)
+	viper.SetDefault("prometheus.vm_tenant_id", "0")
+	viper.SetDefault("prometheus.vm_path_prefix", "")
+	
+	viper.SetDefault("logging.level", "info")
+	viper.SetDefault("logging.format", "text")
+
 	if explicitPath == "" {
 		if env := os.Getenv("HOUSEKEEPER_CONFIG"); env != "" {
 			explicitPath = env
@@ -20,33 +39,41 @@ func loadConfig(explicitPath string) error {
 
 	if explicitPath != "" {
 		viper.SetConfigFile(explicitPath)
-		return viper.ReadInConfig()
-	}
+		if err := viper.ReadInConfig(); err != nil {
+			// Don't fail if config file doesn't exist when flags are provided
+			logrus.WithError(err).Debug("Could not read config file, using defaults and flags")
+		} else {
+			logrus.WithField("config_file", viper.ConfigFileUsed()).Debug("Loaded config file")
+		}
+	} else {
+		viper.SetConfigName("config")
+		viper.SetConfigType("yaml")
 
-	viper.SetConfigName("config")
-	viper.SetConfigType("yaml")
+		// Relative to working dir
+		viper.AddConfigPath(".")
+		viper.AddConfigPath("configs")
 
-	// Relative to working dir
-	viper.AddConfigPath(".")
-	viper.AddConfigPath("configs")
+		// Relative to executable dir
+		if exe, err := os.Executable(); err == nil {
+			dir := filepath.Dir(exe)
+			viper.AddConfigPath(dir)
+			viper.AddConfigPath(filepath.Join(dir, "configs"))
+		}
 
-	// Relative to executable dir
-	if exe, err := os.Executable(); err == nil {
-		dir := filepath.Dir(exe)
-		viper.AddConfigPath(dir)
-		viper.AddConfigPath(filepath.Join(dir, "configs"))
-	}
+		// XDG/home
+		if home, err := os.UserHomeDir(); err == nil {
+			viper.AddConfigPath(filepath.Join(home, ".config", "housekeeper"))
+		}
 
-	// XDG/home
-	if home, err := os.UserHomeDir(); err == nil {
-		viper.AddConfigPath(filepath.Join(home, ".config", "housekeeper"))
-	}
+		// System path
+		viper.AddConfigPath("/etc/housekeeper")
 
-	// System path
-	viper.AddConfigPath("/etc/housekeeper")
-
-	if err := viper.ReadInConfig(); err != nil {
-		return err
+		// Try to read config, but don't fail if not found
+		if err := viper.ReadInConfig(); err != nil {
+			logrus.WithError(err).Debug("No config file found, using defaults and flags")
+		} else {
+			logrus.WithField("config_file", viper.ConfigFileUsed()).Debug("Loaded config file")
+		}
 	}
 
 	// Configure logging after config is loaded

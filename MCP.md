@@ -226,7 +226,9 @@ If `housekeeper` is not in your PATH, use the absolute path:
         "--ch-host", "127.0.0.1",
         "--ch-port", "9000",
         "--ch-user", "default",
-        "--ch-password", "your-password"
+        "--ch-password", "your-password",
+        "--ch-database", "default",
+        "--ch-cluster", "default"
       ]
     }
   }

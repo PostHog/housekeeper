@@ -1,4 +1,7 @@
 gemini_key: "YOUR_GEMINI_KEY"
+logging:
+  level: "info"  # Options: trace, debug, info, warn, error, fatal, panic
+  format: "text" # Options: text, json
 slack:
   webhook_url: "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
 clickhouse:

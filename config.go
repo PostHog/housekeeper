@@ -3,7 +3,9 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 )
 
@@ -43,5 +45,43 @@ func loadConfig(explicitPath string) error {
 	// System path
 	viper.AddConfigPath("/etc/housekeeper")
 
-	return viper.ReadInConfig()
+	if err := viper.ReadInConfig(); err != nil {
+		return err
+	}
+
+	// Configure logging after config is loaded
+	configureLogging()
+	return nil
+}
+
+// configureLogging sets up logrus based on configuration
+func configureLogging() {
+	// Set log level
+	level := viper.GetString("logging.level")
+	if level == "" {
+		level = "info"
+	}
+	
+	parsedLevel, err := logrus.ParseLevel(strings.ToLower(level))
+	if err != nil {
+		logrus.WithError(err).Warn("Invalid log level, defaulting to info")
+		parsedLevel = logrus.InfoLevel
+	}
+	logrus.SetLevel(parsedLevel)
+
+	// Set log format
+	format := viper.GetString("logging.format")
+	if strings.ToLower(format) == "json" {
+		logrus.SetFormatter(&logrus.JSONFormatter{})
+	} else {
+		logrus.SetFormatter(&logrus.TextFormatter{
+			FullTimestamp:   true,
+			TimestampFormat: "2006-01-02 15:04:05",
+		})
+	}
+
+	logrus.WithFields(logrus.Fields{
+		"level":  level,
+		"format": format,
+	}).Debug("Logging configured")
 }

@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"strings"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 	"google.golang.org/genai"
 )
@@ -161,14 +161,19 @@ func QuerySystemTable(ctx context.Context, conn driver.Conn, args QuerySystemTab
 		return nil, fmt.Errorf("rows error: %w", err)
 	}
 
-	log.Printf("Query executed: %s, returned %d rows, columns: %v, types: %v",
-		query.String(), len(results), columns, columnTypes)
+	logrus.WithFields(logrus.Fields{
+		"query":        query.String(),
+		"row_count":    len(results),
+		"columns":      columns,
+		"column_types": columnTypes,
+	}).Debug("System table query executed")
 
 	return results, nil
 }
 
 func AnalyzeErrorsWithAgent(chErrors CHErrors) string {
 	ctx := context.Background()
+	logrus.WithField("error_count", len(chErrors)).Info("Starting Gemini error analysis")
 
 	apiKey := viper.GetString("gemini_key")
 
@@ -177,12 +182,12 @@ func AnalyzeErrorsWithAgent(chErrors CHErrors) string {
 		Backend: genai.BackendGeminiAPI,
 	})
 	if err != nil {
-		log.Fatal("Error creating client:", err)
+		logrus.WithError(err).Fatal("Error creating Gemini client")
 	}
 
 	conn, err := connect()
 	if err != nil {
-		log.Fatal("Error connecting to ClickHouse:", err)
+		logrus.WithError(err).Fatal("Error connecting to ClickHouse for analysis")
 	}
 	defer conn.Close()
 
@@ -236,22 +241,29 @@ Provide a CONCISE analysis (under 2500 characters) with:
 
 Be brief and focus only on actionable insights.`, chErrors.String())
 
+	logrus.Debug("Creating Gemini chat for error analysis")
 	chat, err := client.Chats.Create(ctx, "gemini-1.5-flash", config, nil)
 	if err != nil {
-		log.Fatal("Error creating chat:", err)
+		logrus.WithError(err).Fatal("Error creating Gemini chat")
 	}
 
+	logrus.Debug("Sending initial message to Gemini")
 	resp, err := chat.SendMessage(ctx, genai.Part{Text: prompt})
 	if err != nil {
-		log.Fatal("Error sending message:", err)
+		logrus.WithError(err).Fatal("Error sending message to Gemini")
 	}
 
 	maxIterations := 5
-	for range maxIterations {
+	for i := range maxIterations {
 		functionCalls := resp.FunctionCalls()
 		if len(functionCalls) == 0 {
+			logrus.WithField("iteration", i).Debug("No more function calls from Gemini")
 			break
 		}
+		logrus.WithFields(logrus.Fields{
+			"iteration":      i,
+			"function_count": len(functionCalls),
+		}).Debug("Processing Gemini function calls")
 
 		var funcResponses []genai.Part
 		for _, call := range functionCalls {
@@ -261,8 +273,12 @@ Be brief and focus only on actionable insights.`, chErrors.String())
 					if err := json.Unmarshal(argsJSON, &args); err == nil {
 						results, err := QuerySystemTable(ctx, conn, args)
 						if err != nil {
-							log.Printf("QuerySystemTable error for table %s with columns %v, where %s: %v",
-								args.Table, args.Columns, args.Where, err)
+							logrus.WithFields(logrus.Fields{
+								"table":   args.Table,
+								"columns": args.Columns,
+								"where":   args.Where,
+								"error":   err,
+							}).Error("QuerySystemTable failed")
 							funcResponses = append(funcResponses, genai.Part{
 								FunctionResponse: &genai.FunctionResponse{
 									Name: call.Name,
@@ -288,18 +304,22 @@ Be brief and focus only on actionable insights.`, chErrors.String())
 		}
 
 		if len(funcResponses) > 0 {
+			logrus.WithField("response_count", len(funcResponses)).Debug("Sending function responses to Gemini")
 			resp, err = chat.SendMessage(ctx, funcResponses...)
 			if err != nil {
-				log.Fatal("Error processing function responses:", err)
+				logrus.WithError(err).Fatal("Error processing function responses")
 			}
 		}
 	}
 
-	return resp.Text()
+	result := resp.Text()
+	logrus.WithField("response_length", len(result)).Debug("Gemini analysis complete")
+	return result
 }
 
 func AnalyzeQueryPerformanceWithAgent() string {
 	ctx := context.Background()
+	logrus.Info("Starting Gemini query performance analysis")
 
 	apiKey := viper.GetString("gemini_key")
 
@@ -308,12 +328,12 @@ func AnalyzeQueryPerformanceWithAgent() string {
 		Backend: genai.BackendGeminiAPI,
 	})
 	if err != nil {
-		log.Fatal("Error creating client:", err)
+		logrus.WithError(err).Fatal("Error creating Gemini client")
 	}
 
 	conn, err := connect()
 	if err != nil {
-		log.Fatal("Error connecting to ClickHouse:", err)
+		logrus.WithError(err).Fatal("Error connecting to ClickHouse for analysis")
 	}
 	defer conn.Close()
 
@@ -396,22 +416,29 @@ Provide a CONCISE analysis (under 2500 characters) with:
 
 Focus on actionable insights that will provide the biggest performance gains.`
 
+	logrus.Debug("Creating Gemini chat for performance analysis")
 	chat, err := client.Chats.Create(ctx, "gemini-2.5-flash", config, nil)
 	if err != nil {
-		log.Fatal("Error creating chat:", err)
+		logrus.WithError(err).Fatal("Error creating Gemini chat")
 	}
 
+	logrus.Debug("Sending performance analysis prompt to Gemini")
 	resp, err := chat.SendMessage(ctx, genai.Part{Text: prompt})
 	if err != nil {
-		log.Fatal("Error sending message:", err)
+		logrus.WithError(err).Fatal("Error sending message to Gemini")
 	}
 
 	maxIterations := 5
-	for range maxIterations {
+	for i := range maxIterations {
 		functionCalls := resp.FunctionCalls()
 		if len(functionCalls) == 0 {
+			logrus.WithField("iteration", i).Debug("No more function calls from Gemini")
 			break
 		}
+		logrus.WithFields(logrus.Fields{
+			"iteration":      i,
+			"function_count": len(functionCalls),
+		}).Debug("Processing Gemini function calls")
 
 		var funcResponses []genai.Part
 		for _, call := range functionCalls {
@@ -421,8 +448,12 @@ Focus on actionable insights that will provide the biggest performance gains.`
 					if err := json.Unmarshal(argsJSON, &args); err == nil {
 						results, err := QuerySystemTable(ctx, conn, args)
 						if err != nil {
-							log.Printf("QuerySystemTable error for table %s with columns %v, where %s: %v",
-								args.Table, args.Columns, args.Where, err)
+							logrus.WithFields(logrus.Fields{
+								"table":   args.Table,
+								"columns": args.Columns,
+								"where":   args.Where,
+								"error":   err,
+							}).Error("QuerySystemTable failed")
 							funcResponses = append(funcResponses, genai.Part{
 								FunctionResponse: &genai.FunctionResponse{
 									Name: call.Name,
@@ -448,12 +479,15 @@ Focus on actionable insights that will provide the biggest performance gains.`
 		}
 
 		if len(funcResponses) > 0 {
+			logrus.WithField("response_count", len(funcResponses)).Debug("Sending function responses to Gemini")
 			resp, err = chat.SendMessage(ctx, funcResponses...)
 			if err != nil {
-				log.Fatal("Error processing function responses:", err)
+				logrus.WithError(err).Fatal("Error processing function responses")
 			}
 		}
 	}
 
-	return resp.Text()
+	result := resp.Text()
+	logrus.WithField("response_length", len(result)).Debug("Gemini analysis complete")
+	return result
 }

@@ -10,8 +10,8 @@ import (
 
 func main() {
 	// Define all flags using pflag
-	performanceMode := pflag.Bool("performance", false, "Run query performance analysis instead of error analysis")
-	mcpMode := pflag.Bool("mcp", false, "Run MCP stdio server for ClickHouse system table queries")
+	analyzeMode := pflag.Bool("analyze", false, "Run in analysis mode (error/performance analysis with Gemini AI) instead of MCP server")
+	performanceMode := pflag.Bool("performance", false, "Run query performance analysis (requires --analyze)")
 	configPath := pflag.String("config", "", "Path to YAML config (or set HOUSEKEEPER_CONFIG)")
 	
 	// ClickHouse flags
@@ -46,7 +46,8 @@ func main() {
 	viper.BindPFlag("prometheus.vm_tenant_id", pflag.Lookup("prom-vm-tenant"))
 	viper.BindPFlag("prometheus.vm_path_prefix", pflag.Lookup("prom-vm-prefix"))
 
-	if *mcpMode {
+	// Default to MCP mode unless analysis mode is explicitly requested
+	if !*analyzeMode {
 		// Try to load config file if provided, but don't fail if it doesn't exist
 		// Command-line flags will provide the values
 		if err := loadConfig(*configPath); err != nil {
@@ -66,7 +67,7 @@ func main() {
 		logrus.WithError(err).Fatal("Failed to load config")
 	}
 
-	logrus.Info("Welcome to housekeeper, an AI CH Cluster Observer 👀")
+	logrus.Info("Running in analysis mode (AI-powered ClickHouse monitoring)")
 	apiKey := viper.GetString("gemini_key")
 	if apiKey == "" {
 		logrus.Fatal("Please set gemini_key in configs")

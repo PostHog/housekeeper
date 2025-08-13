@@ -1,126 +1,198 @@
-# Housekeeper
+# Housekeeper - MCP Server for ClickHouse & Prometheus
 
-A Go application that monitors and analyzes ClickHouse database errors using Google's Gemini AI to generate intelligent summaries for Slack notifications.
+**An MCP (Model Context Protocol) server that provides AI assistants with direct access to ClickHouse system tables and Prometheus metrics.**
 
-## Overview
+Housekeeper is an MCP-first tool designed to empower AI assistants like Claude with the ability to query and analyze your ClickHouse clusters and Prometheus metrics in real-time. It exposes read-only access to system tables and metrics, enabling sophisticated analysis, troubleshooting, and monitoring directly through AI conversations.
 
-Housekeeper automatically queries system errors from ClickHouse clusters, analyzes patterns using AI, and produces concise, actionable summaries suitable for team notifications. It focuses on recent errors (past hour) to keep alerts relevant and timely.
+## 🎯 Primary Use Case: MCP Server
 
-## Features
+Housekeeper runs as an MCP server by default, providing tools for:
+- **ClickHouse System Queries**: Read-only access to all `system.*` tables across your entire cluster
+- **Prometheus/Victoria Metrics**: Execute PromQL queries for metrics correlation and analysis
+- **Cluster-Wide Visibility**: Automatic use of `clusterAllReplicas()` for comprehensive insights
 
-- **Cluster-aware monitoring**: Queries all replicas in a ClickHouse cluster
-- **AI-powered analysis**: Uses Google Gemini to identify patterns and severity
-- **Time-based filtering**: Focuses on errors from the last hour
-- **Slack-ready output**: Generates formatted summaries ideal for team notifications
-- **Configurable**: Flexible YAML-based configuration
+### Quick Start with Claude Desktop
 
-## Installation
-
-### Prerequisites
-
-- Go 1.19 or higher
-- Access to a ClickHouse database
-- Google Gemini API key
-
-### Build from source
-
+1. **Install via Go:**
 ```bash
-git clone https://github.com/posthog/housekeeper.git
+go install github.com/PostHog/housekeeper@latest
+```
+
+2. **Configure Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+```json
+{
+  "mcpServers": {
+    "clickhouse": {
+      "command": "housekeeper",
+      "args": [
+        "--ch-host", "127.0.0.1",
+        "--ch-port", "9000",
+        "--ch-user", "default",
+        "--ch-password", "your-password",
+        "--ch-database", "default",
+        "--ch-cluster", "default",
+        "--prom-host", "localhost",
+        "--prom-port", "8481"
+      ]
+    }
+  }
+}
+```
+
+3. **Restart Claude Desktop** and start querying!
+
+## 📚 MCP Tools Available
+
+### `clickhouse_query`
+Query ClickHouse system tables with two modes:
+- **Structured**: Specify table, columns, filters, ordering, and limits
+- **Free-form SQL**: Write custom queries (restricted to `system.*` tables)
+
+Example questions you can ask Claude:
+- "Show me the slowest queries from the last hour"
+- "What tables are using the most disk space?"
+- "Find all failed queries with their error messages"
+- "Show me the current running queries across all nodes"
+
+### `prometheus_query`
+Execute PromQL queries for metrics analysis:
+- Range queries with customizable time windows
+- Instant queries for current values
+- Support for Victoria Metrics cluster mode
+
+Example requests:
+- "What's the current query rate per second?"
+- "Show me memory usage trends for the past hour"
+- "Find nodes with high CPU usage"
+
+## 🔧 Installation Options
+
+### Via Go Install (Recommended)
+```bash
+go install github.com/PostHog/housekeeper@latest
+```
+
+### Build from Source
+```bash
+git clone https://github.com/PostHog/housekeeper.git
 cd housekeeper
-go mod download
 go build -o housekeeper
 ```
 
-## Configuration
+## ⚙️ Configuration
 
-1. Copy the sample configuration:
+### Command-Line Flags (Recommended for MCP)
 ```bash
-cp configs/config.yml.sample configs/config.yml
+housekeeper \
+  --ch-host "127.0.0.1" \
+  --ch-port 9000 \
+  --ch-user "default" \
+  --ch-password "password" \
+  --ch-database "default" \
+  --ch-cluster "cluster_name" \
+  --prom-host "localhost" \
+  --prom-port 8481
 ```
 
-2. Edit `configs/config.yml` with your settings:
+### Configuration File
+Create `configs/config.yml`:
+```yaml
+clickhouse:
+  host: "127.0.0.1"
+  port: 9000
+  user: "default"
+  password: "password"
+  database: "default"
+  cluster: "cluster_name"
+prometheus:
+  host: "localhost"
+  port: 8481
+```
+
+Then run:
+```bash
+housekeeper --config configs/config.yml
+```
+
+## 🚀 Advanced Features
+
+### Victoria Metrics Cluster Mode
+```bash
+housekeeper \
+  --prom-vm-cluster \
+  --prom-vm-tenant "0" \
+  --prom-vm-prefix "select/0/prometheus"
+```
+
+### Kubernetes Port Forwarding
+```bash
+# Forward Victoria Metrics from K8s
+kubectl port-forward --namespace=monitoring \
+  svc/vmcluster-victoria-metrics-cluster-vmselect 8481:8481
+
+# Run housekeeper
+housekeeper --prom-host localhost --prom-port 8481
+```
+
+## 📊 Alternative: Analysis Mode
+
+Housekeeper also includes an AI-powered analysis mode for automated monitoring and alerting:
+
+```bash
+# Run error analysis with Gemini AI
+housekeeper --analyze
+
+# Run performance analysis
+housekeeper --analyze --performance
+```
+
+This mode:
+- Queries recent errors from ClickHouse
+- Analyzes patterns using Google Gemini AI
+- Generates Slack-ready summaries
+- Requires `gemini_api_key` in config
+
+### Analysis Mode Configuration
 ```yaml
 gemini_api_key: "your-gemini-api-key"
 clickhouse:
-  host: "localhost"
-  port: 9000
-  user: "default"
-  password: ""
-  database: "default"
-  cluster: "your-cluster-name"
+  # ... same as above
 ```
 
-## Usage
+## 🔒 Security Notes
 
-### Run the application
+- **Read-Only Access**: MCP server enforces read-only queries to `system.*` tables
+- **No DDL Operations**: Write operations and DDL statements are blocked
+- **Credential Safety**: Never commit configs with passwords
+- **Use Environment Variables**: For production deployments
 
-```bash
-# Using default config location
-./housekeeper
-
-# With custom config
-./housekeeper -c /path/to/config.yml
-```
-
-### Development
-
-```bash
-# Run directly with Go
-go run .
-
-# Start local ClickHouse for testing
-docker-compose up -d
-
-# View ClickHouse logs
-docker-compose logs clickhouse
-
-# Stop local ClickHouse
-docker-compose down
-```
-
-## How It Works
-
-1. **Connect**: Establishes connection to ClickHouse cluster
-2. **Query**: Retrieves system errors from all replicas for the past hour
-3. **Analyze**: Sends error data to Gemini AI for pattern recognition
-4. **Summarize**: Generates a concise summary with severity assessment
-5. **Output**: Displays Slack-formatted message ready for posting
-
-## Output Example
-
-The application generates summaries like:
-
-```
-🔍 *ClickHouse Error Summary*
-• Found 15 authentication failures from IP 192.168.1.100
-• Detected 3 query timeout errors in analytics queries
-• Overall severity: Medium
-• Recommended action: Review authentication logs and optimize slow queries
-```
-
-## Project Structure
+## 📁 Project Structure
 
 ```
 .
-├── main.go          # Application entry point and orchestration
-├── config.go        # Configuration management
-├── clickhouse.go    # ClickHouse connection and queries
-├── gemini.go        # AI integration for error analysis
-├── configs/
-│   └── config.yml.sample  # Configuration template
-└── docker-compose.yml     # Local ClickHouse setup
+├── main.go              # Application entry point
+├── mcp_server.go        # MCP server implementation
+├── clickhouse.go        # ClickHouse connection logic
+├── gemini.go            # Gemini AI integration (analysis mode)
+├── prometheus.go        # Prometheus/Victoria Metrics client
+├── MCP.md               # Detailed MCP documentation
+└── configs/
+    └── config.yml.sample  # Configuration template
 ```
 
-## Security Notes
+## 🤝 Contributing
 
-- Never commit `configs/config.yml` (it's in `.gitignore`)
-- Store API keys securely
-- Use environment variables for sensitive data in production
+We welcome contributions! Key areas:
+- Additional MCP tools for ClickHouse operations
+- Enhanced Prometheus/Victoria Metrics support
+- Improved error handling and validation
+- Documentation and examples
 
-## Contributing
+## 📖 Documentation
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+- **[MCP.md](MCP.md)**: Complete MCP server documentation
+- **[CLAUDE.md](CLAUDE.md)**: Project context for AI assistants
 
-## License
+## 📄 License
 
 MIT License - see [LICENSE.md](LICENSE.md) for details

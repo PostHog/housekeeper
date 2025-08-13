@@ -1,6 +1,6 @@
-# ClickHouse MCP Server
+# ClickHouse MCP Server Documentation
 
-This repository includes a minimal MCP (Model Context Protocol) server that exposes tools for:
+**Housekeeper runs as an MCP server by default** - no flags needed! This document covers the complete MCP implementation that exposes tools for:
 1. Read‑only queries against ClickHouse system tables
 2. Querying Prometheus metrics for monitoring and correlation
 
@@ -34,8 +34,8 @@ go build -o housekeeper
 You can configure the server entirely via command-line flags, making it easy to use without config files:
 
 ```bash
-# ClickHouse flags
-housekeeper --mcp \
+# MCP mode is the default - just run with your connection parameters
+housekeeper \
   --ch-host "127.0.0.1" \
   --ch-port 9000 \
   --ch-user "default" \
@@ -80,7 +80,8 @@ kubectl port-forward --namespace=monitoring svc/vmcluster-victoria-metrics-clust
 
 The server uses the official go-sdk and speaks MCP over stdio (JSON-RPC framed with Content-Length), suitable for clients like Claude Desktop.
 
-- Command (integrated): `./housekeeper -mcp`
+- **Default mode**: `./housekeeper` (runs as MCP server)
+- **Analysis mode**: `./housekeeper --analyze` (runs Gemini AI analysis)
 - Methods implemented:
   - `initialize`
   - `tools/list`
@@ -197,7 +198,6 @@ go install github.com/PostHog/housekeeper@latest
     "clickhouse-local": {
       "command": "housekeeper",
       "args": [
-        "--mcp",
         "--ch-host", "127.0.0.1",
         "--ch-port", "9000",
         "--ch-user", "default",
@@ -222,7 +222,6 @@ If `housekeeper` is not in your PATH, use the absolute path:
     "clickhouse-local": {
       "command": "/Users/yourusername/go/bin/housekeeper",
       "args": [
-        "--mcp",
         "--ch-host", "127.0.0.1",
         "--ch-port", "9000",
         "--ch-user", "default",
@@ -244,7 +243,7 @@ If you prefer using a config file:
   "mcpServers": {
     "clickhouse-prod": {
       "command": "housekeeper",
-      "args": ["--mcp", "--config", "/path/to/your/config.yml"]
+      "args": ["--config", "/path/to/your/config.yml"]
     }
   }
 }

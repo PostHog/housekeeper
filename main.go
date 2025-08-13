@@ -53,12 +53,8 @@ func main() {
 		if !viper.GetBool("tsnet.enabled") {
 			log.Fatal("tsnet mode requested but tsnet.enabled is false in config")
 		}
-		port := viper.GetInt("sse.port")
-		if port == 0 {
-			port = 3333
-		}
-		logrus.WithFields(logrus.Fields{"mode": "tsnet", "port": port, "config": viper.ConfigFileUsed()}).Info("Starting MCP tsnet server")
-		if err := RunMCPTsnetServer(port); err != nil {
+		logrus.WithFields(logrus.Fields{"mode": "tsnet", "config": viper.ConfigFileUsed()}).Info("Starting MCP tsnet server")
+		if err := RunMCPTsnetServer(); err != nil {
 			log.Fatal(err)
 		}
 		return

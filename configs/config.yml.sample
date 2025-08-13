@@ -22,9 +22,20 @@ sse:
 tsnet:
   enabled: false      # Enable Tailscale tsnet integration
   hostname: "housekeeper"  # Hostname on your tailnet (defaults to "housekeeper")
-  auth_key: ""        # Optional: Tailscale auth key for automatic registration
+  auth_key: ""        # Optional: Tailscale auth key for automatic registration (use tagged key for auto-tagging)
   ephemeral: false    # Optional: Make this an ephemeral node
   state_dir: ""       # Optional: Directory for tsnet state (defaults to ./tsnet-state)
+oauth:
+  enabled: false        # set true to expose discovery + JWKS
+  required: false       # set true to require OAuth for all requests (if false, OAuth is optional)
+  issuer: ""            # optional; if empty, derived from request (scheme + host)
+  google:
+    enabled: false      # Enable Google OAuth for user authentication
+    client_id: ""       # Google OAuth client ID
+    client_secret: ""   # Google OAuth client secret
+    allowed_domains:    # List of allowed email domains (empty = allow all)
+      - ""              # e.g., "yourcompany.com" to allow *@yourcompany.com
+    redirect_base_url: ""  # Optional: Base URL for redirects (auto-detected if empty)
 log:
   level: info       # debug, info, warn, error
   format: text      # text or json

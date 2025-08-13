@@ -62,14 +62,14 @@ func RunMCPSSEServer(port int) error {
 	})
 
 	// CORS-enabled handler wrapper
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	corsHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
 		if origin == "" {
 			origin = "*"
 		}
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, Cache-Control")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, Cache-Control, mcp-protocol-version")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 
 		if r.Method == http.MethodOptions {
@@ -79,21 +79,44 @@ func RunMCPSSEServer(port int) error {
 
 		sseHandler.ServeHTTP(w, r)
 	})
-
+	
 	mux := http.NewServeMux()
+	// Initialize OAuth (discovery + JWKS) if enabled
+	initOAuth()
+	if viper.GetBool("oauth.enabled") {
+		mux.HandleFunc("/.well-known/openid-configuration", oauthLoggingMiddleware(handleWellKnownOIDC))
+		mux.HandleFunc("/.well-known/oauth-authorization-server", oauthLoggingMiddleware(handleWellKnownOAuth))
+		mux.HandleFunc("/.well-known/oauth-protected-resource", oauthLoggingMiddleware(handleOAuthProtectedResource))
+		mux.HandleFunc("/oauth/jwks", oauthLoggingMiddleware(handleJWKS))
+		mux.HandleFunc("/oauth/register", oauthLoggingMiddleware(handleClientRegistration))
+		mux.HandleFunc("/oauth/authorize", oauthLoggingMiddleware(handleAuthorize))
+		mux.HandleFunc("/oauth/token", oauthLoggingMiddleware(handleToken))
+		
+		// Google OAuth endpoints if enabled
+		initGoogleOAuth()
+		if viper.GetBool("oauth.google.enabled") {
+			mux.HandleFunc("/oauth/login/google", oauthLoggingMiddleware(handleGoogleLogin))
+			mux.HandleFunc("/oauth/callback/google", oauthLoggingMiddleware(handleGoogleCallback))
+		}
+	}
 	// Simple health endpoint
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
-	mux.Handle("/", handler)
+	
+	// Use the SSE auth handler wrapper for proper OAuth challenges
+	mux.Handle("/", sseAuthHandler(corsHandler))
 	httpAddr := fmt.Sprintf(":%d", port)
 	logrus.WithField("addr", httpAddr).Info("MCP SSE HTTP server listening")
 
 	errCh := make(chan error, 2)
 
+	// Apply logging middleware to the entire mux
+	loggedMux := loggingMiddleware(mux)
+
 	go func() {
-		if err := http.ListenAndServe(httpAddr, mux); err != nil {
+		if err := http.ListenAndServe(httpAddr, loggedMux); err != nil {
 			errCh <- err
 		}
 	}()
@@ -109,7 +132,7 @@ func RunMCPSSEServer(port int) error {
 		keyFile := strings.TrimSpace(viper.GetString("sse.tls.key_file"))
 		selfSigned := viper.GetBool("sse.tls.self_signed")
 
-		server := &http.Server{Addr: tlsAddr, Handler: mux}
+		server := &http.Server{Addr: tlsAddr, Handler: loggedMux}
 
 		if certFile != "" && keyFile != "" {
 			logrus.WithFields(logrus.Fields{"addr": tlsAddr, "cert": certFile}).Info("MCP SSE HTTPS server (file cert)")

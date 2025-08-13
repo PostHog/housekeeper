@@ -13,7 +13,7 @@ import (
 	"tailscale.com/tsnet"
 )
 
-func RunMCPTsnetServer(port int) error {
+func RunMCPTsnetServer() error {
 	if !viper.GetBool("tsnet.enabled") {
 		return fmt.Errorf("tsnet is not enabled in config")
 	}
@@ -29,14 +29,14 @@ func RunMCPTsnetServer(port int) error {
 		}
 	})
 
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	corsHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
 		if origin == "" {
 			origin = "*"
 		}
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, Cache-Control")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, Cache-Control, mcp-protocol-version")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 
 		if r.Method == http.MethodOptions {
@@ -48,11 +48,31 @@ func RunMCPTsnetServer(port int) error {
 	})
 
 	mux := http.NewServeMux()
+	// Initialize OAuth (discovery + JWKS) if enabled
+	initOAuth()
+	if viper.GetBool("oauth.enabled") {
+		mux.HandleFunc("/.well-known/openid-configuration", oauthLoggingMiddleware(handleWellKnownOIDC))
+		mux.HandleFunc("/.well-known/oauth-authorization-server", oauthLoggingMiddleware(handleWellKnownOAuth))
+		mux.HandleFunc("/.well-known/oauth-protected-resource", oauthLoggingMiddleware(handleOAuthProtectedResource))
+		mux.HandleFunc("/oauth/jwks", oauthLoggingMiddleware(handleJWKS))
+		mux.HandleFunc("/oauth/register", oauthLoggingMiddleware(handleClientRegistration))
+		mux.HandleFunc("/oauth/authorize", oauthLoggingMiddleware(handleAuthorize))
+		mux.HandleFunc("/oauth/token", oauthLoggingMiddleware(handleToken))
+		
+		// Google OAuth endpoints if enabled
+		initGoogleOAuth()
+		if viper.GetBool("oauth.google.enabled") {
+			mux.HandleFunc("/oauth/login/google", oauthLoggingMiddleware(handleGoogleLogin))
+			mux.HandleFunc("/oauth/callback/google", oauthLoggingMiddleware(handleGoogleCallback))
+		}
+	}
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
-	mux.Handle("/", handler)
+	
+	// Use the SSE auth handler wrapper for proper OAuth challenges
+	mux.Handle("/", sseAuthHandler(corsHandler))
 
 	tsServer := &tsnet.Server{
 		Dir: viper.GetString("tsnet.state_dir"),
@@ -87,21 +107,32 @@ func RunMCPTsnetServer(port int) error {
 	}
 	defer tsServer.Close()
 
+	lc, err := tsServer.LocalClient()
+	if err != nil {
+		return fmt.Errorf("failed to get local client: %w", err)
+	}
+
 	errCh := make(chan error, 2)
 
-	httpAddr := fmt.Sprintf(":%d", port)
+	// Use standard HTTP port 80 for tsnet
+	httpAddr := ":80"
 	ln, err := tsServer.Listen("tcp", httpAddr)
 	if err != nil {
 		return fmt.Errorf("failed to listen on %s: %w", httpAddr, err)
 	}
+	defer ln.Close()
 
 	logrus.WithFields(logrus.Fields{
-		"addr":     httpAddr,
-		"hostname": tsServer.Hostname,
+		"addr":      httpAddr,
+		"hostname":  tsServer.Hostname,
+		"listen_on": "tailscale-network-only",
 	}).Info("MCP SSE tsnet HTTP server listening")
 
+	// Apply logging middleware
+	loggedMux := loggingMiddleware(mux)
+
 	go func() {
-		if err := http.Serve(ln, mux); err != nil {
+		if err := http.Serve(ln, loggedMux); err != nil {
 			errCh <- err
 		}
 	}()
@@ -116,34 +147,41 @@ func RunMCPTsnetServer(port int) error {
 	if err != nil {
 		logrus.WithError(err).Warn("Failed to listen on HTTPS, continuing with HTTP only")
 	} else {
+		defer lnTLS.Close()
+
 		logrus.WithFields(logrus.Fields{
 			"addr":     httpsAddr,
 			"hostname": tsServer.Hostname,
 		}).Info("MCP SSE tsnet HTTPS server listening")
 
 		go func() {
-			if err := http.Serve(lnTLS, mux); err != nil {
+			if err := http.Serve(lnTLS, loggedMux); err != nil {
 				errCh <- err
 			}
 		}()
 	}
 
 	ctx := context.Background()
-	lc, err := tsServer.LocalClient()
+	status, err := lc.Status(ctx)
 	if err != nil {
-		logrus.WithError(err).Warn("Failed to get local client")
-	} else {
-		status, err := lc.Status(ctx)
-		if err != nil {
-			logrus.WithError(err).Warn("Failed to get status")
-		} else if status.BackendState == "Running" {
-			fields := logrus.Fields{
-				"tailnet_name": status.CurrentTailnet.Name,
-			}
-			if len(status.TailscaleIPs) > 0 {
-				fields["tailscale_ip"] = status.TailscaleIPs[0].String()
-			}
-			logrus.WithFields(fields).Info("Connected to tailnet")
+		logrus.WithError(err).Warn("Failed to get status")
+	} else if status.BackendState == "Running" {
+		fields := logrus.Fields{
+			"tailnet_name": status.CurrentTailnet.Name,
+		}
+		if len(status.TailscaleIPs) > 0 {
+			fields["tailscale_ip"] = status.TailscaleIPs[0].String()
+		}
+		if status.Self != nil && status.Self.DNSName != "" {
+			fields["dns_name"] = status.Self.DNSName
+		}
+		logrus.WithFields(fields).Info("Connected to tailnet")
+		
+		if status.Self != nil && status.Self.DNSName != "" {
+			logrus.WithFields(logrus.Fields{
+				"http_url":  fmt.Sprintf("http://%s%s/healthz", status.Self.DNSName, httpAddr),
+				"https_url": fmt.Sprintf("https://%s/healthz", status.Self.DNSName),
+			}).Info("Service accessible at")
 		}
 	}
 

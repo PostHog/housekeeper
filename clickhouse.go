@@ -53,7 +53,7 @@ func CHErrorAnalysis() ([]CHError, error) {
 func connect() (driver.Conn, error) {
 	var (
 		ctx       = context.Background()
-		addr      = viper.GetString("clickhouse.host") + ":" + viper.GetString("clickhouse.port")
+		addr      = fmt.Sprintf("%s:%d", viper.GetString("clickhouse.host"), viper.GetInt("clickhouse.port"))
 		conn, err = clickhouse.Open(&clickhouse.Options{
 			Addr: []string{addr},
 			Auth: clickhouse.Auth{
@@ -80,6 +80,16 @@ func connect() (driver.Conn, error) {
 		return nil, err
 	}
 
+<<<<<<< Updated upstream
+=======
+	logrus.WithFields(logrus.Fields{
+		"host":     viper.GetString("clickhouse.host"),
+		"port":     viper.GetInt("clickhouse.port"),
+		"database": viper.GetString("clickhouse.database"),
+		"user":     viper.GetString("clickhouse.user"),
+	}).Debug("Attempting to connect to ClickHouse")
+
+>>>>>>> Stashed changes
 	if err := conn.Ping(ctx); err != nil {
 		if exception, ok := err.(*clickhouse.Exception); ok {
 			fmt.Printf("Exception [%d] %s \n%s\n", exception.Code, exception.Message, exception.StackTrace)

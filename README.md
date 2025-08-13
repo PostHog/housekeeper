@@ -25,7 +25,7 @@ Housekeeper automatically queries system errors from ClickHouse clusters, analyz
 ### Build from source
 
 ```bash
-git clone https://github.com/fuziontech/housekeeper.git
+git clone https://github.com/posthog/housekeeper.git
 cd housekeeper
 go mod download
 go build -o housekeeper

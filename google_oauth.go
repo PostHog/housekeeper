@@ -390,7 +390,13 @@ func handleAuthorizeWithGoogle(w http.ResponseWriter, r *http.Request) {
 
 	authorizationCodes.Store(code, authCode)
 
-	u, _ := url.Parse(redirectURI)
+	// Replace backslashes with forward slashes to avoid browser quirks
+	safeRedirectURI := strings.ReplaceAll(redirectURI, "\\", "/")
+	u, err := url.Parse(safeRedirectURI)
+	if err != nil || u.Hostname() != "" {
+		http.Error(w, "Invalid redirect_uri", http.StatusBadRequest)
+		return
+	}
 	q := u.Query()
 	q.Set("code", code)
 	if state != "" {

@@ -2,13 +2,9 @@ package main
 
 import (
 	"fmt"
-	"log"
 
-<<<<<<< Updated upstream
-=======
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/pflag"
->>>>>>> Stashed changes
 	"github.com/spf13/viper"
 )
 
@@ -54,51 +50,53 @@ func main() {
 		// Try to load config file if provided, but don't fail if it doesn't exist
 		// Command-line flags will provide the values
 		if err := loadConfig(*configPath); err != nil {
-<<<<<<< Updated upstream
-			log.Fatal(err)
-=======
 			// Only log debug message if config file wasn't found
 			logrus.WithError(err).Debug("Config file not found, using command-line flags")
->>>>>>> Stashed changes
 		}
 		// Do not print to stdout in MCP mode; stdout is reserved for JSON-RPC
+		logrus.Info("Starting MCP server")
 		if err := RunMCPServer(); err != nil {
-			log.Fatal(err)
+			logrus.WithError(err).Fatal("Failed to run MCP server")
 		}
 		return
 	}
 
-	fmt.Println("Welcome to housekeeper, an AI CH Cluster Observer 👀")
-
 	if err := loadConfig(*configPath); err != nil {
-		log.Fatal(err)
+		logrus.WithError(err).Fatal("Failed to load config")
 	}
+
+	logrus.Info("Welcome to housekeeper, an AI CH Cluster Observer 👀")
 	apiKey := viper.GetString("gemini_key")
 	if apiKey == "" {
-		log.Fatal("Please set api_key in configs")
+		logrus.Fatal("Please set gemini_key in configs")
 	}
+	logrus.Debug("Gemini API key loaded")
 
 	if *performanceMode {
-		fmt.Println("Analyzing query performance...")
+		logrus.Info("Analyzing query performance...")
 		summary := AnalyzeQueryPerformanceWithAgent()
+		logrus.Info("Performance analysis complete")
 		fmt.Println(summary)
 		return
 	}
 
+	logrus.Info("Starting ClickHouse error analysis")
 	errors, err := CHErrorAnalysis()
 	if err != nil {
-		log.Fatal(err)
+		logrus.WithError(err).Fatal("Failed to analyze ClickHouse errors")
 	}
 
 	if len(errors) > 0 {
-		fmt.Println("Errors found:")
+		logrus.WithField("error_count", len(errors)).Info("Errors found, analyzing with Gemini")
 		summary := AnalyzeErrorsWithAgent(errors)
 		fmt.Println(summary)
 
 		if err := SendSlackMessage(summary, len(errors)); err != nil {
-			log.Printf("Failed to send Slack message: %v", err)
+			logrus.WithError(err).Error("Failed to send Slack message")
+		} else {
+			logrus.Info("Slack notification sent successfully")
 		}
 	} else {
-		fmt.Println("No errors found in the last hour")
+		logrus.Info("No errors found in the last hour")
 	}
 }

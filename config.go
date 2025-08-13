@@ -3,7 +3,9 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 )
 
@@ -66,12 +68,6 @@ func loadConfig(explicitPath string) error {
 		// System path
 		viper.AddConfigPath("/etc/housekeeper")
 
-<<<<<<< Updated upstream
-	// System path
-	viper.AddConfigPath("/etc/housekeeper")
-
-	return viper.ReadInConfig()
-=======
 		// Try to read config, but don't fail if not found
 		if err := viper.ReadInConfig(); err != nil {
 			logrus.WithError(err).Debug("No config file found, using defaults and flags")
@@ -115,5 +111,4 @@ func configureLogging() {
 		"level":  level,
 		"format": format,
 	}).Debug("Logging configured")
->>>>>>> Stashed changes
 }

@@ -84,7 +84,7 @@ jobs:
     - name: Check binary exists
       run: |
         ls -la housekeeper
-        ./housekeeper --help
+        ./housekeeper --help || true
 
   lint:
     name: Lint

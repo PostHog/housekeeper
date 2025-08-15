@@ -1,7 +1,7 @@
 # ClickHouse MCP Server Documentation
 
 **Housekeeper runs as an MCP server by default** - no flags needed! This document covers the complete MCP implementation that exposes tools for:
-1. Read‑only queries against ClickHouse system tables
+1. Read‑only queries against configurable ClickHouse databases
 2. Querying Prometheus metrics for monitoring and correlation
 
 ## Installation
@@ -42,12 +42,14 @@ housekeeper \
   --ch-password "your-password" \
   --ch-database "default" \
   --ch-cluster "default" \
+  --ch-allowed-databases "system,models" \
   --prom-host "localhost" \
   --prom-port 8481
 ```
 
 Available flags:
 - `--ch-host`: ClickHouse host (default: "127.0.0.1")
+- `--ch-allowed-databases`: Comma-separated list of databases to allow (default: ["system"])
 - `--ch-port`: ClickHouse port (default: 9000)
 - `--ch-user`: ClickHouse user (default: "default")
 - `--ch-password`: ClickHouse password (default: "")
@@ -92,10 +94,17 @@ The server uses the official go-sdk and speaks MCP over stdio (JSON-RPC framed w
 ### Tool: clickhouse_query
 
 - Name: `clickhouse_query`
-- Description: Query ClickHouse system tables via `clusterAllReplicas` (read‑only).
+- Description: Query ClickHouse tables (read‑only) from configured allowed databases.
 - Arguments (two modes):
-  - Structured: `table` (required, system.*), `columns`[], `where`, `order_by`, `limit`.
-  - Free-form: `sql` (string) — must be a single SELECT/WITH statement referencing only `system.*` tables. Semicolons and write/DDL are rejected.
+  - Structured: `table` (required, must be from allowed databases), `columns`[], `where`, `order_by`, `limit`.
+  - Free-form: `sql` (string) — must be a single SELECT/WITH statement referencing only tables from allowed databases. Semicolons and write/DDL are rejected.
+- Allowed databases: Configured via `--ch-allowed-databases` flag or `clickhouse.allowed_databases` in config (defaults to ["system"])
+
+**IMPORTANT Usage Guidelines:**
+- **For system.* tables**: The tool automatically uses `clusterAllReplicas()` to get cluster-wide data
+- **For non-system databases**: Do NOT use `clusterAllReplicas()` in your SQL queries. Query these tables directly.
+- Example for system tables: Tool converts `system.query_log` → `clusterAllReplicas(cluster, system.query_log)`
+- Example for other tables: Query `models.predictions` directly without cluster functions
 
 ### Tool: prometheus_query
 

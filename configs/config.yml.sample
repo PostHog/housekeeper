@@ -11,6 +11,11 @@ clickhouse:
   password: "default"
   database: "default"
   cluster: "default"
+  # List of databases the MCP server is allowed to query
+  # If not specified, defaults to ["system"]
+  allowed_databases:
+    - "system"
+    - "models"
 prometheus:
   host: "localhost"
   port: 8481

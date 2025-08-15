@@ -21,6 +21,7 @@ func main() {
 	pflag.String("ch-password", "", "ClickHouse password")
 	pflag.String("ch-database", "default", "ClickHouse database")
 	pflag.String("ch-cluster", "default", "ClickHouse cluster name")
+	pflag.StringSlice("ch-allowed-databases", []string{"system"}, "Comma-separated list of databases the MCP server can query")
 	
 	// Prometheus/Victoria Metrics flags
 	pflag.String("prom-host", "localhost", "Prometheus/Victoria Metrics host")
@@ -39,6 +40,7 @@ func main() {
 	viper.BindPFlag("clickhouse.password", pflag.Lookup("ch-password"))
 	viper.BindPFlag("clickhouse.database", pflag.Lookup("ch-database"))
 	viper.BindPFlag("clickhouse.cluster", pflag.Lookup("ch-cluster"))
+	viper.BindPFlag("clickhouse.allowed_databases", pflag.Lookup("ch-allowed-databases"))
 	
 	viper.BindPFlag("prometheus.host", pflag.Lookup("prom-host"))
 	viper.BindPFlag("prometheus.port", pflag.Lookup("prom-port"))

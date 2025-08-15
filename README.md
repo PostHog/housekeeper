@@ -7,7 +7,7 @@ Housekeeper is an MCP-first tool designed to empower AI assistants like Claude w
 ## 🎯 Primary Use Case: MCP Server
 
 Housekeeper runs as an MCP server by default, providing tools for:
-- **ClickHouse System Queries**: Read-only access to all `system.*` tables across your entire cluster
+- **ClickHouse Queries**: Read-only access to configurable databases (defaults to `system.*` tables) across your entire cluster
 - **Prometheus/Victoria Metrics**: Execute PromQL queries for metrics correlation and analysis
 - **Cluster-Wide Visibility**: Automatic use of `clusterAllReplicas()` for comprehensive insights
 
@@ -31,6 +31,7 @@ go install github.com/PostHog/housekeeper@latest
         "--ch-password", "your-password",
         "--ch-database", "default",
         "--ch-cluster", "default",
+        "--ch-allowed-databases", "system,models",
         "--prom-host", "localhost",
         "--prom-port", "8481"
       ]
@@ -44,9 +45,9 @@ go install github.com/PostHog/housekeeper@latest
 ## 📚 MCP Tools Available
 
 ### `clickhouse_query`
-Query ClickHouse system tables with two modes:
+Query ClickHouse tables from allowed databases with two modes:
 - **Structured**: Specify table, columns, filters, ordering, and limits
-- **Free-form SQL**: Write custom queries (restricted to `system.*` tables)
+- **Free-form SQL**: Write custom queries (restricted to allowed databases)
 
 Example questions you can ask Claude:
 - "Show me the slowest queries from the last hour"
@@ -90,6 +91,7 @@ housekeeper \
   --ch-password "password" \
   --ch-database "default" \
   --ch-cluster "cluster_name" \
+  --ch-allowed-databases "system,models" \
   --prom-host "localhost" \
   --prom-port 8481
 ```
@@ -104,6 +106,9 @@ clickhouse:
   password: "password"
   database: "default"
   cluster: "cluster_name"
+  allowed_databases:
+    - "system"
+    - "models"
 prometheus:
   host: "localhost"
   port: 8481
@@ -161,7 +166,7 @@ clickhouse:
 
 ## 🔒 Security Notes
 
-- **Read-Only Access**: MCP server enforces read-only queries to `system.*` tables
+- **Read-Only Access**: MCP server enforces read-only queries to configured databases
 - **No DDL Operations**: Write operations and DDL statements are blocked
 - **Credential Safety**: Never commit configs with passwords
 - **Use Environment Variables**: For production deployments

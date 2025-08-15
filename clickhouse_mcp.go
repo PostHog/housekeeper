@@ -32,8 +32,9 @@ func validateQueryArgs(a queryArgs) error {
 		return fmt.Errorf("table is required (or provide 'sql')")
 	}
 	t := strings.TrimSpace(a.Table)
-	if !strings.HasPrefix(t, "system.") {
-		return fmt.Errorf("only system.* tables are allowed")
+	if !isTableAllowed(t) {
+		allowedDbs := getAllowedDatabases()
+		return fmt.Errorf("table must be in allowed databases: %v", allowedDbs)
 	}
 	if strings.ContainsAny(t, ";\n\r\t") {
 		return fmt.Errorf("invalid table name")
@@ -178,8 +179,29 @@ func normalizeValue(v interface{}) interface{} {
 	return fmt.Sprint(v)
 }
 
+// getAllowedDatabases returns the list of databases the MCP server can query
+func getAllowedDatabases() []string {
+	allowed := viper.GetStringSlice("clickhouse.allowed_databases")
+	if len(allowed) == 0 {
+		// Default to system if nothing configured
+		return []string{"system"}
+	}
+	return allowed
+}
+
+// isTableAllowed checks if a table reference is in the allowed databases
+func isTableAllowed(table string) bool {
+	allowedDbs := getAllowedDatabases()
+	for _, db := range allowedDbs {
+		if strings.HasPrefix(strings.ToLower(table), strings.ToLower(db)+".") {
+			return true
+		}
+	}
+	return false
+}
+
 // validateFreeformSQL ensures the provided SQL is a single SELECT/WITH query and
-// references only system.* tables (including inside clusterAllReplicas()).
+// references only allowed database tables (including inside clusterAllReplicas()).
 func validateFreeformSQL(sql string) error {
 	s := strings.TrimSpace(sql)
 	if s == "" {
@@ -234,15 +256,17 @@ func validateFreeformSQL(sql string) error {
 					parts := strings.SplitN(inner, ",", 2)
 					if len(parts) == 2 {
 						tbl := strings.TrimSpace(parts[1])
-						if !strings.HasPrefix(strings.ToLower(tbl), "system.") {
-							return fmt.Errorf("clusterAllReplicas must target system.* tables")
+						if !isTableAllowed(tbl) {
+							allowedDbs := getAllowedDatabases()
+							return fmt.Errorf("clusterAllReplicas must target tables from allowed databases: %v", allowedDbs)
 						}
 					}
 				}
 			} else {
-				// Raw table reference must be system.*
-				if !strings.HasPrefix(strings.ToLower(ref), "system.") {
-					return fmt.Errorf("only system.* tables are allowed (found: %s)", ref)
+				// Raw table reference must be in allowed databases
+				if !isTableAllowed(ref) {
+					allowedDbs := getAllowedDatabases()
+					return fmt.Errorf("only tables from allowed databases %v are allowed (found: %s)", allowedDbs, ref)
 				}
 			}
 			idx = end

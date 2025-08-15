@@ -22,13 +22,18 @@ func RunMCPServer() error {
 		return fmt.Errorf("failed to initialize prometheus client: %v", err)
 	}
 
+	// Build description with allowed databases
+	allowedDbs := getAllowedDatabases()
+	dbList := strings.Join(allowedDbs, ", ")
+	toolDesc := fmt.Sprintf("Read-only queries against ClickHouse databases (%s). Always uses clusterAllReplicas for system tables to get cluster-wide data", dbList)
+	
 	// Register ClickHouse tool with inferred input schema (from queryArgs)
 	mcp.AddTool[queryArgs, map[string]any](
 		srv,
 		&mcp.Tool{
 			Name:        "clickhouse_query",
-			Title:       "Query ClickHouse system tables",
-			Description: "Read-only queries against ClickHouse system.* via clusterAllReplicas",
+			Title:       "Query ClickHouse tables",
+			Description: toolDesc,
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		},
 		func(ctx context.Context, ss *mcp.ServerSession, req *mcp.CallToolParamsFor[queryArgs]) (*mcp.CallToolResultFor[map[string]any], error) {

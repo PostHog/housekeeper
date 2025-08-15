@@ -7,9 +7,9 @@ Housekeeper is an MCP-first tool designed to empower AI assistants like Claude w
 ## 🎯 Primary Use Case: MCP Server
 
 Housekeeper runs as an MCP server by default, providing tools for:
-- **ClickHouse Queries**: Read-only access to configurable databases (defaults to `system.*` tables) across your entire cluster
+- **ClickHouse Queries**: Read-only access to configurable databases (defaults to `system.*` tables)
 - **Prometheus/Victoria Metrics**: Execute PromQL queries for metrics correlation and analysis
-- **Cluster-Wide Visibility**: Automatic use of `clusterAllReplicas()` for comprehensive insights
+- **Smart Cluster Querying**: Automatic use of `clusterAllReplicas()` for system tables only (non-system tables are queried directly)
 
 ### Quick Start with Claude Desktop
 

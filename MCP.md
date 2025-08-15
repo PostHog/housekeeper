@@ -94,11 +94,17 @@ The server uses the official go-sdk and speaks MCP over stdio (JSON-RPC framed w
 ### Tool: clickhouse_query
 
 - Name: `clickhouse_query`
-- Description: Query ClickHouse tables via `clusterAllReplicas` (read‑only) from configured allowed databases.
+- Description: Query ClickHouse tables (read‑only) from configured allowed databases.
 - Arguments (two modes):
   - Structured: `table` (required, must be from allowed databases), `columns`[], `where`, `order_by`, `limit`.
   - Free-form: `sql` (string) — must be a single SELECT/WITH statement referencing only tables from allowed databases. Semicolons and write/DDL are rejected.
 - Allowed databases: Configured via `--ch-allowed-databases` flag or `clickhouse.allowed_databases` in config (defaults to ["system"])
+
+**IMPORTANT Usage Guidelines:**
+- **For system.* tables**: The tool automatically uses `clusterAllReplicas()` to get cluster-wide data
+- **For non-system databases**: Do NOT use `clusterAllReplicas()` in your SQL queries. Query these tables directly.
+- Example for system tables: Tool converts `system.query_log` → `clusterAllReplicas(cluster, system.query_log)`
+- Example for other tables: Query `models.predictions` directly without cluster functions
 
 ### Tool: prometheus_query
 

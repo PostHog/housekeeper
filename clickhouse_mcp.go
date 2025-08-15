@@ -64,7 +64,6 @@ func runClickhouseQuery(a queryArgs) ([]map[string]interface{}, error) {
 	if strings.TrimSpace(a.SQL) != "" {
 		query = a.SQL
 	} else {
-		cluster := viper.GetString("clickhouse.cluster")
 		var sb strings.Builder
 		sb.WriteString("SELECT ")
 		if len(a.Columns) > 0 {
@@ -72,7 +71,15 @@ func runClickhouseQuery(a queryArgs) ([]map[string]interface{}, error) {
 		} else {
 			sb.WriteString("*")
 		}
-		sb.WriteString(fmt.Sprintf(" FROM clusterAllReplicas(%s, %s)", cluster, a.Table))
+		
+		// Only use clusterAllReplicas for system tables
+		if strings.HasPrefix(strings.ToLower(a.Table), "system.") {
+			cluster := viper.GetString("clickhouse.cluster")
+			sb.WriteString(fmt.Sprintf(" FROM clusterAllReplicas(%s, %s)", cluster, a.Table))
+		} else {
+			sb.WriteString(fmt.Sprintf(" FROM %s", a.Table))
+		}
+		
 		if a.Where != "" {
 			sb.WriteString(" WHERE ")
 			sb.WriteString(a.Where)

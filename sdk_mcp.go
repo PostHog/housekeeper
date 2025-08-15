@@ -25,7 +25,7 @@ func RunMCPServer() error {
 	// Build description with allowed databases
 	allowedDbs := getAllowedDatabases()
 	dbList := strings.Join(allowedDbs, ", ")
-	toolDesc := fmt.Sprintf("Read-only queries against ClickHouse databases (%s). Always uses clusterAllReplicas for system tables to get cluster-wide data", dbList)
+	toolDesc := fmt.Sprintf("Read-only queries against ClickHouse databases (%s). IMPORTANT: Only use clusterAllReplicas for system.* tables to get cluster-wide data. For non-system databases, query directly without clusterAllReplicas", dbList)
 	
 	// Register ClickHouse tool with inferred input schema (from queryArgs)
 	mcp.AddTool[queryArgs, map[string]any](

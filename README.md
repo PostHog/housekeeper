@@ -4,12 +4,27 @@
 
 Housekeeper is an MCP-first tool designed to empower AI assistants like Claude with the ability to query and analyze your ClickHouse clusters and Prometheus metrics in real-time. It exposes read-only access to system tables and metrics, enabling sophisticated analysis, troubleshooting, and monitoring directly through AI conversations.
 
-## 🎯 Primary Use Case: MCP Server
+## 🎯 Primary Use Cases
 
+### 1. MCP Server (Default)
 Housekeeper runs as an MCP server by default, providing tools for:
 - **ClickHouse System Queries**: Read-only access to all `system.*` tables across your entire cluster
 - **Prometheus/Victoria Metrics**: Execute PromQL queries for metrics correlation and analysis
 - **Cluster-Wide Visibility**: Automatic use of `clusterAllReplicas()` for comprehensive insights
+
+### 2. Interactive Slack Bot (New!)
+Transform Slack into a powerful query interface:
+- **Natural Language Queries**: Ask questions in plain English
+- **AI-Powered Translation**: Supports Gemini, Claude, and GPT-4
+- **Thread Conversations**: Maintain context across follow-up questions
+- **Formatted Results**: Get readable, actionable insights
+
+```bash
+# Run as Slack bot
+housekeeper --slack-bot --config configs/config.yml
+```
+
+See [SLACK_BOT.md](SLACK_BOT.md) for setup instructions.
 
 ### Quick Start with Claude Desktop
 

@@ -12,6 +12,7 @@ func main() {
 	// Define all flags using pflag
 	analyzeMode := pflag.Bool("analyze", false, "Run in analysis mode (error/performance analysis with Gemini AI) instead of MCP server")
 	performanceMode := pflag.Bool("performance", false, "Run query performance analysis (requires --analyze)")
+	slackBotMode := pflag.Bool("slack-bot", false, "Run as an interactive Slack bot that queries the MCP server")
 	configPath := pflag.String("config", "", "Path to YAML config (or set HOUSEKEEPER_CONFIG)")
 	
 	// ClickHouse flags
@@ -45,6 +46,25 @@ func main() {
 	viper.BindPFlag("prometheus.vm_cluster_mode", pflag.Lookup("prom-vm-cluster"))
 	viper.BindPFlag("prometheus.vm_tenant_id", pflag.Lookup("prom-vm-tenant"))
 	viper.BindPFlag("prometheus.vm_path_prefix", pflag.Lookup("prom-vm-prefix"))
+
+	// Handle Slack bot mode
+	if *slackBotMode {
+		if err := loadConfig(*configPath); err != nil {
+			logrus.WithError(err).Fatal("Failed to load config for Slack bot")
+		}
+		
+		logrus.Info("Starting Slack bot with MCP integration")
+		bot, err := NewSlackBot()
+		if err != nil {
+			logrus.WithError(err).Fatal("Failed to create Slack bot")
+		}
+		defer bot.Close()
+		
+		if err := bot.Run(); err != nil {
+			logrus.WithError(err).Fatal("Failed to run Slack bot")
+		}
+		return
+	}
 
 	// Default to MCP mode unless analysis mode is explicitly requested
 	if !*analyzeMode {

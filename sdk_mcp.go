@@ -38,8 +38,7 @@ func RunMCPServer() error {
 		},
 		func(ctx context.Context, ss *mcp.ServerSession, req *mcp.CallToolParamsFor[queryArgs]) (*mcp.CallToolResultFor[map[string]any], error) {
 			qa := req.Arguments
-			if qa.OrderBy == "" { /* tolerate orderBy alias via schema inference not possible here */
-			}
+			// Note: OrderBy might be empty, which is valid
 			if err := validateQueryArgs(qa); err != nil {
 				return nil, err
 			}

@@ -34,19 +34,19 @@ func main() {
 	pflag.Parse()
 	
 	// Bind pflags to viper
-	viper.BindPFlag("clickhouse.host", pflag.Lookup("ch-host"))
-	viper.BindPFlag("clickhouse.port", pflag.Lookup("ch-port"))
-	viper.BindPFlag("clickhouse.user", pflag.Lookup("ch-user"))
-	viper.BindPFlag("clickhouse.password", pflag.Lookup("ch-password"))
-	viper.BindPFlag("clickhouse.database", pflag.Lookup("ch-database"))
-	viper.BindPFlag("clickhouse.cluster", pflag.Lookup("ch-cluster"))
-	viper.BindPFlag("clickhouse.allowed_databases", pflag.Lookup("ch-allowed-databases"))
+	_ = viper.BindPFlag("clickhouse.host", pflag.Lookup("ch-host"))
+	_ = viper.BindPFlag("clickhouse.port", pflag.Lookup("ch-port"))
+	_ = viper.BindPFlag("clickhouse.user", pflag.Lookup("ch-user"))
+	_ = viper.BindPFlag("clickhouse.password", pflag.Lookup("ch-password"))
+	_ = viper.BindPFlag("clickhouse.database", pflag.Lookup("ch-database"))
+	_ = viper.BindPFlag("clickhouse.cluster", pflag.Lookup("ch-cluster"))
+	_ = viper.BindPFlag("clickhouse.allowed_databases", pflag.Lookup("ch-allowed-databases"))
 	
-	viper.BindPFlag("prometheus.host", pflag.Lookup("prom-host"))
-	viper.BindPFlag("prometheus.port", pflag.Lookup("prom-port"))
-	viper.BindPFlag("prometheus.vm_cluster_mode", pflag.Lookup("prom-vm-cluster"))
-	viper.BindPFlag("prometheus.vm_tenant_id", pflag.Lookup("prom-vm-tenant"))
-	viper.BindPFlag("prometheus.vm_path_prefix", pflag.Lookup("prom-vm-prefix"))
+	_ = viper.BindPFlag("prometheus.host", pflag.Lookup("prom-host"))
+	_ = viper.BindPFlag("prometheus.port", pflag.Lookup("prom-port"))
+	_ = viper.BindPFlag("prometheus.vm_cluster_mode", pflag.Lookup("prom-vm-cluster"))
+	_ = viper.BindPFlag("prometheus.vm_tenant_id", pflag.Lookup("prom-vm-tenant"))
+	_ = viper.BindPFlag("prometheus.vm_path_prefix", pflag.Lookup("prom-vm-prefix"))
 
 	// Default to MCP mode unless analysis mode is explicitly requested
 	if !*analyzeMode {

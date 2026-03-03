@@ -31,6 +31,10 @@ func loadConfig(explicitPath string) error {
 	viper.SetDefault("logging.level", "info")
 	viper.SetDefault("logging.format", "text")
 
+	viper.SetDefault("http.enabled", false)
+	viper.SetDefault("http.addr", ":8080")
+	viper.SetDefault("http.auth_token", "")
+
 	if explicitPath == "" {
 		if env := os.Getenv("HOUSEKEEPER_CONFIG"); env != "" {
 			explicitPath = env

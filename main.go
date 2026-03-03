@@ -29,7 +29,12 @@ func main() {
 	pflag.Bool("prom-vm-cluster", false, "Enable Victoria Metrics cluster mode")
 	pflag.String("prom-vm-tenant", "0", "Victoria Metrics tenant ID")
 	pflag.String("prom-vm-prefix", "", "Victoria Metrics path prefix")
-	
+
+	// HTTP/SSE server flags (for network-accessible MCP deployment)
+	pflag.Bool("http", false, "Run MCP server over HTTP/SSE instead of stdio")
+	pflag.String("http-addr", ":8080", "Address for the HTTP MCP server (e.g. :8080)")
+	pflag.String("http-auth-token", "", "Bearer token for HTTP authentication (empty = no auth)")
+
 	// Parse all flags
 	pflag.Parse()
 	
@@ -48,6 +53,10 @@ func main() {
 	_ = viper.BindPFlag("prometheus.vm_tenant_id", pflag.Lookup("prom-vm-tenant"))
 	_ = viper.BindPFlag("prometheus.vm_path_prefix", pflag.Lookup("prom-vm-prefix"))
 
+	_ = viper.BindPFlag("http.enabled", pflag.Lookup("http"))
+	_ = viper.BindPFlag("http.addr", pflag.Lookup("http-addr"))
+	_ = viper.BindPFlag("http.auth_token", pflag.Lookup("http-auth-token"))
+
 	// Default to MCP mode unless analysis mode is explicitly requested
 	if !*analyzeMode {
 		// Try to load config file if provided, but don't fail if it doesn't exist
@@ -57,7 +66,7 @@ func main() {
 			logrus.WithError(err).Debug("Config file not found, using command-line flags")
 
 		}
-		// Do not print to stdout in MCP mode; stdout is reserved for JSON-RPC
+		// Note: in stdio mode stdout is reserved for JSON-RPC; in HTTP mode it's safe to log
 		logrus.Info("Starting MCP server")
 		if err := RunMCPServer(); err != nil {
 			logrus.WithError(err).Fatal("Failed to run MCP server")

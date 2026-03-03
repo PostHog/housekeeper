@@ -4,12 +4,15 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"net/http"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/prometheus/common/model"
+	"github.com/sirupsen/logrus"
+	"github.com/spf13/viper"
 )
 
 // RunMCPServer starts an MCP stdio server using the official go-sdk.
@@ -119,7 +122,41 @@ func RunMCPServer() error {
 		},
 	)
 
+	if viper.GetBool("http.enabled") {
+		return runHTTPMCPServer(srv)
+	}
 	return srv.Run(context.Background(), mcp.NewStdioTransport())
+}
+
+// runHTTPMCPServer starts the MCP server over HTTP using SSE transport.
+func runHTTPMCPServer(srv *mcp.Server) error {
+	addr := viper.GetString("http.addr")
+	authToken := viper.GetString("http.auth_token")
+
+	handler := mcp.NewSSEHandler(func(*http.Request) *mcp.Server { return srv })
+
+	var h http.Handler = handler
+	if authToken != "" {
+		h = bearerAuthMiddleware(authToken, handler)
+		logrus.Info("HTTP authentication enabled")
+	} else {
+		logrus.Warn("HTTP authentication is disabled — consider setting http.auth_token")
+	}
+
+	logrus.WithField("addr", addr).Info("Starting HTTP/SSE MCP server")
+	return http.ListenAndServe(addr, h)
+}
+
+// bearerAuthMiddleware rejects requests that do not carry the expected Bearer token.
+func bearerAuthMiddleware(token string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != token {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // summarizeRows renders a compact, human-friendly summary of results.

@@ -4,12 +4,15 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"net/http"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/prometheus/common/model"
+	"github.com/sirupsen/logrus"
+	"github.com/spf13/viper"
 )
 
 // RunMCPServer starts an MCP stdio server using the official go-sdk.
@@ -119,7 +122,107 @@ func RunMCPServer() error {
 		},
 	)
 
-	return srv.Run(context.Background(), mcp.NewStdioTransport())
+	return runHTTPMCPServer(srv)
+}
+
+// runHTTPMCPServer starts the MCP server over HTTP using the streamable HTTP transport.
+func runHTTPMCPServer(srv *mcp.Server) error {
+	addr := viper.GetString("http.addr")
+	authToken := viper.GetString("http.auth_token")
+
+	mux := http.NewServeMux()
+
+	// Health check — no auth required; used by k8s probes and connectivity tests.
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok\n"))
+	})
+
+	// MCP streamable HTTP transport (2025-03-26 spec).
+	// Client sends POST / with Accept: application/json, text/event-stream
+	streamHandler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
+		logrus.WithFields(logrus.Fields{
+			"remote_addr": r.RemoteAddr,
+			"user_agent":  r.Header.Get("User-Agent"),
+		}).Info("New MCP session opened")
+		return srv
+	}, nil)
+
+	if authToken != "" {
+		mux.Handle("/", bearerAuthMiddleware(authToken, streamHandler))
+		logrus.Info("HTTP authentication enabled")
+	} else {
+		mux.Handle("/", streamHandler)
+		logrus.Warn("HTTP authentication is disabled — consider setting http.auth_token")
+	}
+
+	// Wrap everything with CORS + request logging.
+	handler := requestLoggingMiddleware(corsMiddleware(mux))
+
+	// Bump to debug so request logs are visible during troubleshooting.
+	// Users can lower this via config once things are working.
+	if logrus.GetLevel() < logrus.DebugLevel {
+		logrus.SetLevel(logrus.DebugLevel)
+		logrus.Debug("Log level raised to debug for HTTP mode (set logging.level in config to suppress)")
+	}
+
+	logrus.WithFields(logrus.Fields{
+		"addr":       addr,
+		"mcp_url":    "http://<host>" + addr + "/",
+		"health_url": "http://<host>" + addr + "/health",
+		"auth":       authToken != "",
+	}).Info("MCP server ready")
+
+	return http.ListenAndServe(addr, handler)
+}
+
+// requestLoggingMiddleware logs every incoming HTTP request.
+func requestLoggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		logrus.WithFields(logrus.Fields{
+			"method":      r.Method,
+			"path":        r.URL.RequestURI(),
+			"remote_addr": r.RemoteAddr,
+			"user_agent":  r.Header.Get("User-Agent"),
+			"accept":      r.Header.Get("Accept"),
+			"origin":      r.Header.Get("Origin"),
+			"has_auth":    r.Header.Get("Authorization") != "",
+		}).Debug("Incoming request")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// corsMiddleware adds CORS headers so Claude.ai (and other web-based MCP clients) can connect.
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// bearerAuthMiddleware rejects requests that do not carry the expected Bearer token.
+func bearerAuthMiddleware(token string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != token {
+			logrus.WithFields(logrus.Fields{
+				"remote_addr": r.RemoteAddr,
+				"path":        r.URL.Path,
+				"method":      r.Method,
+				"has_auth":    auth != "",
+			}).Warn("Rejected unauthorized request")
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // summarizeRows renders a compact, human-friendly summary of results.

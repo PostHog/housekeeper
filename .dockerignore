@@ -1,0 +1,14 @@
+# Version control
+.git
+.gitignore
+
+# Local config (contains real credentials — never bake into image)
+configs/config.yml
+
+# Dev artifacts
+docker/
+*.log
+
+# Editor
+.vscode
+.idea

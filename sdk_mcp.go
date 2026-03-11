@@ -128,7 +128,7 @@ func RunMCPServer() error {
 	return srv.Run(context.Background(), mcp.NewStdioTransport())
 }
 
-// runHTTPMCPServer starts the MCP server over HTTP using SSE transport.
+// runHTTPMCPServer starts the MCP server over HTTP using the streamable HTTP transport.
 func runHTTPMCPServer(srv *mcp.Server) error {
 	addr := viper.GetString("http.addr")
 	authToken := viper.GetString("http.auth_token")
@@ -142,34 +142,20 @@ func runHTTPMCPServer(srv *mcp.Server) error {
 		_, _ = w.Write([]byte("ok\n"))
 	})
 
-	// MCP streamable HTTP transport (2025-03-26 spec) — used by Claude Code CLI.
+	// MCP streamable HTTP transport (2025-03-26 spec).
 	// Client sends POST / with Accept: application/json, text/event-stream
 	streamHandler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
 		logrus.WithFields(logrus.Fields{
 			"remote_addr": r.RemoteAddr,
 			"user_agent":  r.Header.Get("User-Agent"),
-			"transport":   "streamable-http",
 		}).Info("New MCP session opened")
 		return srv
 	}, nil)
 
-	// Legacy SSE transport (2024-11-05 spec) — used by mcp-remote and Claude Desktop proxies.
-	// Client sends GET /sse to open stream, receives an endpoint event, then POSTs messages.
-	sseHandler := mcp.NewSSEHandler(func(r *http.Request) *mcp.Server {
-		logrus.WithFields(logrus.Fields{
-			"remote_addr": r.RemoteAddr,
-			"user_agent":  r.Header.Get("User-Agent"),
-			"transport":   "sse",
-		}).Info("New MCP session opened")
-		return srv
-	})
-
 	if authToken != "" {
-		mux.Handle("/sse", bearerAuthMiddleware(authToken, sseHandler))
 		mux.Handle("/", bearerAuthMiddleware(authToken, streamHandler))
 		logrus.Info("HTTP authentication enabled")
 	} else {
-		mux.Handle("/sse", sseHandler)
 		mux.Handle("/", streamHandler)
 		logrus.Warn("HTTP authentication is disabled — consider setting http.auth_token")
 	}
@@ -184,26 +170,13 @@ func runHTTPMCPServer(srv *mcp.Server) error {
 		logrus.Debug("Log level raised to debug for HTTP mode (set logging.level in config to suppress)")
 	}
 
-	tlsCert := viper.GetString("http.tls_cert")
-	tlsKey := viper.GetString("http.tls_key")
-	tlsEnabled := tlsCert != "" && tlsKey != ""
-
-	scheme := "http"
-	if tlsEnabled {
-		scheme = "https"
-	}
 	logrus.WithFields(logrus.Fields{
-		"addr":              addr,
-		"tls":               tlsEnabled,
-		"streamable_url":    scheme + "://<host>" + addr + "/     (Claude Code CLI)",
-		"sse_url":           scheme + "://<host>" + addr + "/sse  (mcp-remote / Claude Desktop)",
-		"health_url":        scheme + "://<host>" + addr + "/health",
-		"auth":              authToken != "",
+		"addr":       addr,
+		"mcp_url":    "http://<host>" + addr + "/",
+		"health_url": "http://<host>" + addr + "/health",
+		"auth":       authToken != "",
 	}).Info("MCP server ready")
 
-	if tlsEnabled {
-		return http.ListenAndServeTLS(addr, tlsCert, tlsKey, handler)
-	}
 	return http.ListenAndServe(addr, handler)
 }
 

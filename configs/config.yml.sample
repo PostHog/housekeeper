@@ -28,5 +28,3 @@ http:
   enabled: false          # Set to true to serve MCP over HTTP instead of stdio
   addr: ":8080"           # Listen address
   auth_token: ""          # Bearer token clients must present (leave empty to disable auth)
-  tls_cert: ""            # Path to TLS certificate file (enables HTTPS when both are set)
-  tls_key: ""             # Path to TLS private key file

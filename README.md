@@ -11,21 +11,30 @@ Housekeeper runs as an MCP server by default, providing tools for:
 - **Prometheus/Victoria Metrics**: Execute PromQL queries for metrics correlation and analysis
 - **Smart Cluster Querying**: Automatic use of `clusterAllReplicas()` for system tables only (non-system tables are queried directly)
 
-### Quick Start with Claude Desktop
+---
 
-1. **Install via Go:**
+## 🚀 Quick Start with Claude Desktop
+
+There are two ways to connect Housekeeper to Claude Desktop.
+
+### Option A — Local process (stdio, simplest)
+
+Claude Desktop launches Housekeeper directly as a child process. No network exposure needed.
+
+1. **Install:**
 ```bash
 go install github.com/PostHog/housekeeper@latest
+# or build from source: go build -o housekeeper
 ```
 
-2. **Configure Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+2. **Configure** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 ```json
 {
   "mcpServers": {
-    "clickhouse": {
+    "housekeeper": {
       "command": "housekeeper",
       "args": [
-        "--ch-host", "127.0.0.1",
+        "--ch-host", "your-clickhouse-host",
         "--ch-port", "9000",
         "--ch-user", "default",
         "--ch-password", "your-password",
@@ -40,7 +49,46 @@ go install github.com/PostHog/housekeeper@latest
 }
 ```
 
-3. **Restart Claude Desktop** and start querying!
+3. **Restart Claude Desktop** and start querying.
+
+---
+
+### Option B — HTTP server + mcp-remote (Docker / Kubernetes)
+
+Run Housekeeper as an HTTP MCP server and connect Claude Desktop to it via [mcp-remote](https://github.com/geelen/mcp-remote). This is the recommended approach when running in Docker or Kubernetes.
+
+1. **Start Housekeeper** (pick one):
+
+```bash
+# Config file (an example can be found at configs/config.yml.sample)
+docker run -p 8080:8080 \
+  -v $(pwd)/configs/config.yml:/etc/housekeeper/config.yml \
+  ghcr.io/posthog/housekeeper:latest
+
+# Or directly with Go
+housekeeper --http --ch-host your-clickhouse-host --ch-password your-password
+```
+
+2. **Configure Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+```json
+{
+  "mcpServers": {
+    "housekeeper": {
+      "command": "npx",
+      "args": ["mcp-remote", "http://localhost:8080"],
+      "env": {
+        "PATH": "/path/to/node/v20+/bin:/usr/local/bin:/usr/bin:/bin"
+      }
+    }
+  }
+}
+```
+
+> **Note:** mcp-remote requires Node.js v20+. If you manage Node with nvm, hardcode the path to avoid Claude Desktop picking up an older version (e.g. `/Users/you/.nvm/versions/node/v24.x.x/bin`). The `PATH` env override ensures all child processes also use the right version.
+
+3. **Restart Claude Desktop** and start querying.
+
+---
 
 ## 📚 MCP Tools Available
 
@@ -66,25 +114,30 @@ Example requests:
 - "Show me memory usage trends for the past hour"
 - "Find nodes with high CPU usage"
 
-## 🔧 Installation Options
+---
 
-### Via Go Install (Recommended)
+## 🐳 Running with Docker
+
 ```bash
-go install github.com/PostHog/housekeeper@latest
+# Build the image
+docker build -t housekeeper .
+
+# Run with a config file
+docker run -p 8080:8080 \
+  -v $(pwd)/configs/config.yml:/etc/housekeeper/config.yml \
+  housekeeper --config /etc/housekeeper/config.yml
 ```
 
-### Build from Source
-```bash
-git clone https://github.com/PostHog/housekeeper.git
-cd housekeeper
-go build -o housekeeper
-```
+The container starts in HTTP mode by default (`ENTRYPOINT ["/housekeeper", "--http"]`). The health check endpoint is available at `GET /health`.
 
 ## ⚙️ Configuration
 
-### Command-Line Flags (Recommended for MCP)
+### Command-Line Flags
 ```bash
 housekeeper \
+  --http \
+  --http-addr ":8080" \
+  --http-auth-token "your-secret-token" \
   --ch-host "127.0.0.1" \
   --ch-port 9000 \
   --ch-user "default" \
@@ -97,7 +150,8 @@ housekeeper \
 ```
 
 ### Configuration File
-Create `configs/config.yml`:
+Copy `configs/config.yml.sample` to `configs/config.yml` and fill in your values:
+
 ```yaml
 clickhouse:
   host: "127.0.0.1"
@@ -112,6 +166,10 @@ clickhouse:
 prometheus:
   host: "localhost"
   port: 8481
+http:
+  enabled: true
+  addr: ":8080"
+  auth_token: "your-secret-token"
 ```
 
 Then run:
@@ -134,9 +192,14 @@ housekeeper \
 # Forward Victoria Metrics from K8s
 kubectl port-forward --namespace=monitoring \
   svc/vmcluster-victoria-metrics-cluster-vmselect 8481:8481
+```
 
-# Run housekeeper
-housekeeper --prom-host localhost --prom-port 8481
+Now configure the Prometheus host and port in your `config.yml`:
+
+```yaml
+prometheus:
+  host: "localhost"
+  port: 8481
 ```
 
 ## 📊 Alternative: Analysis Mode
@@ -155,11 +218,11 @@ This mode:
 - Queries recent errors from ClickHouse
 - Analyzes patterns using Google Gemini AI
 - Generates Slack-ready summaries
-- Requires `gemini_api_key` in config
+- Requires `gemini_key` in config
 
 ### Analysis Mode Configuration
 ```yaml
-gemini_api_key: "your-gemini-api-key"
+gemini_key: "your-gemini-api-key"
 clickhouse:
   # ... same as above
 ```
@@ -168,21 +231,28 @@ clickhouse:
 
 - **Read-Only Access**: MCP server enforces read-only queries to configured databases
 - **No DDL Operations**: Write operations and DDL statements are blocked
-- **Credential Safety**: Never commit configs with passwords
-- **Use Environment Variables**: For production deployments
+- **Bearer Auth**: Protect the HTTP endpoint with `--http-auth-token` in production
+- **Credential Safety**: Never commit `configs/config.yml` (it's in `.gitignore`)
+
+---
 
 ## 📁 Project Structure
 
 ```
 .
-├── main.go              # Application entry point
-├── mcp_server.go        # MCP server implementation
-├── clickhouse.go        # ClickHouse connection logic
-├── gemini.go            # Gemini AI integration (analysis mode)
-├── prometheus.go        # Prometheus/Victoria Metrics client
-├── MCP.md               # Detailed MCP documentation
+├── main.go                  # Entry point, flag definitions
+├── sdk_mcp.go               # HTTP MCP server, middlewares
+├── clickhouse_mcp.go        # ClickHouse query validation and execution
+├── prometheus_mcp.go        # Prometheus/Victoria Metrics client
+├── clickhouse.go            # ClickHouse connection (analysis mode)
+├── agent.go                 # Gemini AI integration (analysis mode)
+├── slack.go                 # Slack notifications (analysis mode)
+├── config.go                # Config loading and logging setup
+├── Dockerfile               # Multi-stage build → distroless runtime
+├── docker-compose.yml       # Local ClickHouse for development
+├── chart/                   # Helm chart for Kubernetes
 └── configs/
-    └── config.yml.sample  # Configuration template
+    └── config.yml.sample    # Configuration template
 ```
 
 ## 🤝 Contributing
@@ -192,11 +262,6 @@ We welcome contributions! Key areas:
 - Enhanced Prometheus/Victoria Metrics support
 - Improved error handling and validation
 - Documentation and examples
-
-## 📖 Documentation
-
-- **[MCP.md](MCP.md)**: Complete MCP server documentation
-- **[CLAUDE.md](CLAUDE.md)**: Project context for AI assistants
 
 ## 📄 License
 

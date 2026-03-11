@@ -2,11 +2,10 @@
 
 **An MCP (Model Context Protocol) server that provides AI assistants with direct access to ClickHouse system tables and Prometheus metrics.**
 
-Housekeeper is an MCP-first tool designed to empower AI assistants like Claude with the ability to query and analyze your ClickHouse clusters and Prometheus metrics in real-time. It exposes read-only access to system tables and metrics, enabling sophisticated analysis, troubleshooting, and monitoring directly through AI conversations.
+Housekeeper runs as an HTTP MCP server, providing AI assistants like Claude with the ability to query and analyze your ClickHouse clusters and Prometheus metrics in real-time. It exposes read-only access to system tables and metrics, enabling sophisticated analysis, troubleshooting, and monitoring directly through AI conversations.
 
-## 🎯 Primary Use Case: MCP Server
+## 🎯 What it provides
 
-Housekeeper runs as an MCP server by default, providing tools for:
 - **ClickHouse Queries**: Read-only access to configurable databases (defaults to `system.*` tables)
 - **Prometheus/Victoria Metrics**: Execute PromQL queries for metrics correlation and analysis
 - **Smart Cluster Querying**: Automatic use of `clusterAllReplicas()` for system tables only (non-system tables are queried directly)
@@ -15,61 +14,26 @@ Housekeeper runs as an MCP server by default, providing tools for:
 
 ## 🚀 Quick Start with Claude Desktop
 
-There are two ways to connect Housekeeper to Claude Desktop.
+Housekeeper runs as an HTTP server. Connect Claude Desktop to it via [mcp-remote](https://github.com/geelen/mcp-remote).
 
-### Option A — Local process (stdio, simplest)
-
-Claude Desktop launches Housekeeper directly as a child process. No network exposure needed.
-
-1. **Install:**
-```bash
-go install github.com/PostHog/housekeeper@latest
-# or build from source: go build -o housekeeper
-```
-
-2. **Configure** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
-```json
-{
-  "mcpServers": {
-    "housekeeper": {
-      "command": "housekeeper",
-      "args": [
-        "--ch-host", "your-clickhouse-host",
-        "--ch-port", "9000",
-        "--ch-user", "default",
-        "--ch-password", "your-password",
-        "--ch-database", "default",
-        "--ch-cluster", "default",
-        "--ch-allowed-databases", "system,models",
-        "--prom-host", "localhost",
-        "--prom-port", "8481"
-      ]
-    }
-  }
-}
-```
-
-3. **Restart Claude Desktop** and start querying.
-
----
-
-### Option B — HTTP server + mcp-remote (Docker / Kubernetes)
-
-Run Housekeeper as an HTTP MCP server and connect Claude Desktop to it via [mcp-remote](https://github.com/geelen/mcp-remote). This is the recommended approach when running in Docker or Kubernetes.
-
-1. **Start Housekeeper** (pick one):
+### 1. Start Housekeeper
 
 ```bash
-# Config file (an example can be found at configs/config.yml.sample)
+# With a config file (recommended — see configs/config.yml.sample)
 docker run -p 8080:8080 \
   -v $(pwd)/configs/config.yml:/etc/housekeeper/config.yml \
   ghcr.io/posthog/housekeeper:latest
 
-# Or directly with Go
-housekeeper --http --ch-host your-clickhouse-host --ch-password your-password
+# Or with flags
+docker run -p 8080:8080 ghcr.io/posthog/housekeeper:latest \
+  --ch-host your-clickhouse-host \
+  --ch-password your-password
 ```
 
-2. **Configure Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+### 2. Configure Claude Desktop
+
+Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
 ```json
 {
   "mcpServers": {
@@ -86,7 +50,7 @@ housekeeper --http --ch-host your-clickhouse-host --ch-password your-password
 
 > **Note:** mcp-remote requires Node.js v20+. If you manage Node with nvm, hardcode the path to avoid Claude Desktop picking up an older version (e.g. `/Users/you/.nvm/versions/node/v24.x.x/bin`). The `PATH` env override ensures all child processes also use the right version.
 
-3. **Restart Claude Desktop** and start querying.
+### 3. Restart Claude Desktop and start querying!
 
 ---
 
@@ -106,7 +70,6 @@ Example questions you can ask Claude:
 ### `prometheus_query`
 Execute PromQL queries for metrics analysis:
 - Range queries with customizable time windows
-- Instant queries for current values
 - Support for Victoria Metrics cluster mode
 
 Example requests:
@@ -128,14 +91,13 @@ docker run -p 8080:8080 \
   housekeeper --config /etc/housekeeper/config.yml
 ```
 
-The container starts in HTTP mode by default (`ENTRYPOINT ["/housekeeper", "--http"]`). The health check endpoint is available at `GET /health`.
+The health check endpoint is available at `GET /health`.
 
 ## ⚙️ Configuration
 
 ### Command-Line Flags
 ```bash
 housekeeper \
-  --http \
   --http-addr ":8080" \
   --http-auth-token "your-secret-token" \
   --ch-host "127.0.0.1" \
@@ -167,21 +129,20 @@ prometheus:
   host: "localhost"
   port: 8481
 http:
-  enabled: true
   addr: ":8080"
   auth_token: "your-secret-token"
 ```
 
 Then run:
 ```bash
-housekeeper --config configs/config.yml
+docker run -p 8080:8080 \
+  -v $(pwd)/configs/config.yml:/etc/housekeeper/config.yml \
+  housekeeper --config /etc/housekeeper/config.yml
 ```
-
-## 🚀 Advanced Features
 
 ### Victoria Metrics Cluster Mode
 ```bash
-housekeeper \
+docker run -p 8080:8080 housekeeper \
   --prom-vm-cluster \
   --prom-vm-tenant "0" \
   --prom-vm-prefix "select/0/prometheus"
@@ -202,16 +163,13 @@ prometheus:
   port: 8481
 ```
 
-## 📊 Alternative: Analysis Mode
+## 📊 Analysis Mode (Optional)
 
 Housekeeper also includes an AI-powered analysis mode for automated monitoring and alerting:
 
 ```bash
-# Run error analysis with Gemini AI
-housekeeper --analyze
-
-# Run performance analysis
-housekeeper --analyze --performance
+docker run housekeeper --analyze
+docker run housekeeper --analyze --performance
 ```
 
 This mode:
@@ -220,12 +178,13 @@ This mode:
 - Generates Slack-ready summaries
 - Requires `gemini_key` in config
 
-### Analysis Mode Configuration
 ```yaml
 gemini_key: "your-gemini-api-key"
 clickhouse:
   # ... same as above
 ```
+
+---
 
 ## 🔒 Security Notes
 

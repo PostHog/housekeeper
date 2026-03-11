@@ -30,8 +30,7 @@ func main() {
 	pflag.String("prom-vm-tenant", "0", "Victoria Metrics tenant ID")
 	pflag.String("prom-vm-prefix", "", "Victoria Metrics path prefix")
 
-	// HTTP server flags (for network-accessible MCP deployment)
-	pflag.Bool("http", false, "Run MCP server over HTTP instead of stdio")
+	// HTTP server flags
 	pflag.String("http-addr", ":8080", "Address for the HTTP MCP server (e.g. :8080)")
 	pflag.String("http-auth-token", "", "Bearer token for HTTP authentication (empty = no auth)")
 
@@ -53,7 +52,6 @@ func main() {
 	_ = viper.BindPFlag("prometheus.vm_tenant_id", pflag.Lookup("prom-vm-tenant"))
 	_ = viper.BindPFlag("prometheus.vm_path_prefix", pflag.Lookup("prom-vm-prefix"))
 
-	_ = viper.BindPFlag("http.enabled", pflag.Lookup("http"))
 	_ = viper.BindPFlag("http.addr", pflag.Lookup("http-addr"))
 	_ = viper.BindPFlag("http.auth_token", pflag.Lookup("http-auth-token"))
 

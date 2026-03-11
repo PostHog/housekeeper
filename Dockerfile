@@ -15,4 +15,4 @@ COPY --from=builder /app/housekeeper /housekeeper
 
 EXPOSE 8080
 
-ENTRYPOINT ["/housekeeper", "--http"]
+ENTRYPOINT ["/housekeeper"]

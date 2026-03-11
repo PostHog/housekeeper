@@ -122,10 +122,7 @@ func RunMCPServer() error {
 		},
 	)
 
-	if viper.GetBool("http.enabled") {
-		return runHTTPMCPServer(srv)
-	}
-	return srv.Run(context.Background(), mcp.NewStdioTransport())
+	return runHTTPMCPServer(srv)
 }
 
 // runHTTPMCPServer starts the MCP server over HTTP using the streamable HTTP transport.

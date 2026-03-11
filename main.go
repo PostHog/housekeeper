@@ -34,6 +34,8 @@ func main() {
 	pflag.Bool("http", false, "Run MCP server over HTTP/SSE instead of stdio")
 	pflag.String("http-addr", ":8080", "Address for the HTTP MCP server (e.g. :8080)")
 	pflag.String("http-auth-token", "", "Bearer token for HTTP authentication (empty = no auth)")
+	pflag.String("http-tls-cert", "", "Path to TLS certificate file (enables HTTPS when set together with --http-tls-key)")
+	pflag.String("http-tls-key", "", "Path to TLS private key file (enables HTTPS when set together with --http-tls-cert)")
 
 	// Parse all flags
 	pflag.Parse()
@@ -56,6 +58,8 @@ func main() {
 	_ = viper.BindPFlag("http.enabled", pflag.Lookup("http"))
 	_ = viper.BindPFlag("http.addr", pflag.Lookup("http-addr"))
 	_ = viper.BindPFlag("http.auth_token", pflag.Lookup("http-auth-token"))
+	_ = viper.BindPFlag("http.tls_cert", pflag.Lookup("http-tls-cert"))
+	_ = viper.BindPFlag("http.tls_key", pflag.Lookup("http-tls-key"))
 
 	// Default to MCP mode unless analysis mode is explicitly requested
 	if !*analyzeMode {

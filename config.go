@@ -34,6 +34,8 @@ func loadConfig(explicitPath string) error {
 	viper.SetDefault("http.enabled", false)
 	viper.SetDefault("http.addr", ":8080")
 	viper.SetDefault("http.auth_token", "")
+	viper.SetDefault("http.tls_cert", "")
+	viper.SetDefault("http.tls_key", "")
 
 	if explicitPath == "" {
 		if env := os.Getenv("HOUSEKEEPER_CONFIG"); env != "" {

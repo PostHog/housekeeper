@@ -142,24 +142,37 @@ func runHTTPMCPServer(srv *mcp.Server) error {
 		_, _ = w.Write([]byte("ok\n"))
 	})
 
-	// MCP streamable HTTP endpoint (2025-03-26 spec — what Claude Code uses).
-	// POST / with Accept: application/json, text/event-stream
+	// MCP streamable HTTP transport (2025-03-26 spec) — used by Claude Code CLI.
+	// Client sends POST / with Accept: application/json, text/event-stream
 	streamHandler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
 		logrus.WithFields(logrus.Fields{
 			"remote_addr": r.RemoteAddr,
 			"user_agent":  r.Header.Get("User-Agent"),
-		}).Info("New MCP streamable session opened")
+			"transport":   "streamable-http",
+		}).Info("New MCP session opened")
 		return srv
 	}, nil)
 
-	var mcpHandler http.Handler = streamHandler
+	// Legacy SSE transport (2024-11-05 spec) — used by mcp-remote and Claude Desktop proxies.
+	// Client sends GET /sse to open stream, receives an endpoint event, then POSTs messages.
+	sseHandler := mcp.NewSSEHandler(func(r *http.Request) *mcp.Server {
+		logrus.WithFields(logrus.Fields{
+			"remote_addr": r.RemoteAddr,
+			"user_agent":  r.Header.Get("User-Agent"),
+			"transport":   "sse",
+		}).Info("New MCP session opened")
+		return srv
+	})
+
 	if authToken != "" {
-		mcpHandler = bearerAuthMiddleware(authToken, streamHandler)
+		mux.Handle("/sse", bearerAuthMiddleware(authToken, sseHandler))
+		mux.Handle("/", bearerAuthMiddleware(authToken, streamHandler))
 		logrus.Info("HTTP authentication enabled")
 	} else {
+		mux.Handle("/sse", sseHandler)
+		mux.Handle("/", streamHandler)
 		logrus.Warn("HTTP authentication is disabled — consider setting http.auth_token")
 	}
-	mux.Handle("/", mcpHandler)
 
 	// Wrap everything with CORS + request logging.
 	handler := requestLoggingMiddleware(corsMiddleware(mux))
@@ -171,13 +184,26 @@ func runHTTPMCPServer(srv *mcp.Server) error {
 		logrus.Debug("Log level raised to debug for HTTP mode (set logging.level in config to suppress)")
 	}
 
-	logrus.WithFields(logrus.Fields{
-		"addr":       addr,
-		"mcp_url":    "http://<host>" + addr + "/",
-		"health_url": "http://<host>" + addr + "/health",
-		"auth":       authToken != "",
-	}).Info("HTTP/SSE MCP server ready — connect your MCP client to the mcp_url above")
+	tlsCert := viper.GetString("http.tls_cert")
+	tlsKey := viper.GetString("http.tls_key")
+	tlsEnabled := tlsCert != "" && tlsKey != ""
 
+	scheme := "http"
+	if tlsEnabled {
+		scheme = "https"
+	}
+	logrus.WithFields(logrus.Fields{
+		"addr":              addr,
+		"tls":               tlsEnabled,
+		"streamable_url":    scheme + "://<host>" + addr + "/     (Claude Code CLI)",
+		"sse_url":           scheme + "://<host>" + addr + "/sse  (mcp-remote / Claude Desktop)",
+		"health_url":        scheme + "://<host>" + addr + "/health",
+		"auth":              authToken != "",
+	}).Info("MCP server ready")
+
+	if tlsEnabled {
+		return http.ListenAndServeTLS(addr, tlsCert, tlsKey, handler)
+	}
 	return http.ListenAndServe(addr, handler)
 }
 

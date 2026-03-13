@@ -11,10 +11,17 @@ import (
 
 // loadConfig loads configuration from an explicit path if provided, otherwise
 // searches several conventional locations to work when launched by external hosts (e.g., MCP clients).
-// Note: Command-line flags bound to viper will override config file values
+// Priority (highest to lowest): CLI flags > env vars > config file > defaults.
+// Env vars use the prefix HOUSEKEEPER_ with dots replaced by underscores, e.g.:
+//   HOUSEKEEPER_CLICKHOUSE_HOST, HOUSEKEEPER_CLICKHOUSE_PASSWORD, HOUSEKEEPER_HTTP_AUTH_TOKEN
 func loadConfig(explicitPath string) error {
+	// Enable environment variable support
+	viper.SetEnvPrefix("HOUSEKEEPER")
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	viper.AutomaticEnv()
+
 	// Set defaults for all configuration values
-	// These can be overridden by config file or command-line flags
+	// These can be overridden by env vars, config file, or command-line flags
 	viper.SetDefault("clickhouse.host", "127.0.0.1")
 	viper.SetDefault("clickhouse.port", 9000)
 	viper.SetDefault("clickhouse.user", "default")

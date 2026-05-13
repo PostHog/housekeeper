@@ -1,0 +1,18 @@
+logging:
+  level: "info"
+  format: "text"
+clickhouse:
+  host: "<dev-node-fqdn>"
+  port: 9440
+  secure: true
+  user: "developer"
+  # password injected via HOUSEKEEPER_CLICKHOUSE_PASSWORD env var
+  database: "posthog"
+  cluster: "posthog"
+  allowed_databases:
+    - "system"
+    - "default"
+    - "posthog"
+http:
+  addr: ":8080"
+  auth_token: ""

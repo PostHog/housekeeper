@@ -51,30 +51,31 @@ func CHErrorAnalysis() ([]CHError, error) {
 }
 
 func connect() (driver.Conn, error) {
-	var (
-		ctx       = context.Background()
-		addr      = fmt.Sprintf("%s:%d", viper.GetString("clickhouse.host"), viper.GetInt("clickhouse.port"))
-		conn, err = clickhouse.Open(&clickhouse.Options{
-			Addr: []string{addr},
-			Auth: clickhouse.Auth{
-				Database: viper.GetString("clickhouse.database"),
-				Username: viper.GetString("clickhouse.user"),
-				Password: viper.GetString("clickhouse.password"),
+	addr := fmt.Sprintf("%s:%d", viper.GetString("clickhouse.host"), viper.GetInt("clickhouse.port"))
+	opts := &clickhouse.Options{
+		Addr: []string{addr},
+		Auth: clickhouse.Auth{
+			Database: viper.GetString("clickhouse.database"),
+			Username: viper.GetString("clickhouse.user"),
+			Password: viper.GetString("clickhouse.password"),
+		},
+		ClientInfo: clickhouse.ClientInfo{
+			Products: []struct {
+				Name    string
+				Version string
+			}{
+				{Name: "gemini-go-clickhouse", Version: "0.1"},
 			},
-			TLS: &tls.Config{InsecureSkipVerify: true},
-			ClientInfo: clickhouse.ClientInfo{
-				Products: []struct {
-					Name    string
-					Version string
-				}{
-					{Name: "gemini-go-clickhouse", Version: "0.1"},
-				},
-			},
-			Debugf: func(format string, v ...interface{}) {
-				logrus.Debugf(format, v...)
-			},
-		})
-	)
+		},
+		Debugf: func(format string, v ...interface{}) {
+			logrus.Debugf(format, v...)
+		},
+	}
+	if viper.GetBool("clickhouse.secure") {
+		opts.TLS = &tls.Config{InsecureSkipVerify: true}
+	}
+	ctx := context.Background()
+	conn, err := clickhouse.Open(opts)
 
 	if err != nil {
 		return nil, err

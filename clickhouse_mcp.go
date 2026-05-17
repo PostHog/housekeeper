@@ -82,7 +82,7 @@ func runClickhouseQuery(a queryArgs) ([]map[string]interface{}, error) {
 			cluster := viper.GetString("clickhouse.cluster")
 			fmt.Fprintf(&sb, " FROM clusterAllReplicas(%s, %s)", cluster, a.Table)
 		} else {
-			sb.WriteString(fmt.Sprintf(" FROM %s", a.Table))
+			fmt.Fprintf(&sb, " FROM %s", a.Table)
 		}
 		
 		if a.Where != "" {
@@ -94,7 +94,7 @@ func runClickhouseQuery(a queryArgs) ([]map[string]interface{}, error) {
 			sb.WriteString(a.OrderBy)
 		}
 		if a.Limit > 0 {
-			sb.WriteString(fmt.Sprintf(" LIMIT %d", a.Limit))
+			fmt.Fprintf(&sb, " LIMIT %d", a.Limit)
 		}
 		query = sb.String()
 	}

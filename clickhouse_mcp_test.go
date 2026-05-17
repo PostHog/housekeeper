@@ -467,7 +467,7 @@ func TestQueryBuilding(t *testing.T) {
 				sb.WriteString(tt.args.Where)
 			}
 			if tt.args.Limit > 0 {
-				sb.WriteString(fmt.Sprintf(" LIMIT %d", tt.args.Limit))
+				fmt.Fprintf(&sb, " LIMIT %d", tt.args.Limit)
 			}
 			
 			query := sb.String()

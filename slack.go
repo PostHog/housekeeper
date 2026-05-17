@@ -84,7 +84,11 @@ func SendSlackMessage(summary string, errorCount int) error {
 	if err != nil {
 		return fmt.Errorf("error sending slack message: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			log.Printf("error closing slack response body: %v", err)
+		}
+	}()
 
 	body, _ := io.ReadAll(resp.Body)
 

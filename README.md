@@ -79,6 +79,14 @@ Example requests:
 
 ---
 
+## 🔍 Investigation Playbook
+
+For diagnosing ClickHouse + ZooKeeper issues (replication anomalies, counter spikes, session expirations, readonly replicas) using the MCP tools above, see **[INVESTIGATION_PLAYBOOK.md](./INVESTIGATION_PLAYBOOK.md)**.
+
+It captures a triage methodology and a set of `system.*` query patterns that resolve most common dead ends — particularly the "source code says impossible but data shows otherwise" trap.
+
+---
+
 ## 🐳 Running with Docker
 
 ```bash

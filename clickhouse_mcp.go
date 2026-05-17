@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 )
 
@@ -58,7 +59,11 @@ func runClickhouseQuery(a queryArgs) ([]map[string]interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	defer func() {
+		if err := conn.Close(); err != nil {
+			logrus.WithError(err).Warn("Error closing ClickHouse connection")
+		}
+	}()
 
 	var query string
 	if strings.TrimSpace(a.SQL) != "" {
@@ -75,9 +80,9 @@ func runClickhouseQuery(a queryArgs) ([]map[string]interface{}, error) {
 		// Only use clusterAllReplicas for system tables
 		if strings.HasPrefix(strings.ToLower(a.Table), "system.") {
 			cluster := viper.GetString("clickhouse.cluster")
-			sb.WriteString(fmt.Sprintf(" FROM clusterAllReplicas(%s, %s)", cluster, a.Table))
+			fmt.Fprintf(&sb, " FROM clusterAllReplicas(%s, %s)", cluster, a.Table)
 		} else {
-			sb.WriteString(fmt.Sprintf(" FROM %s", a.Table))
+			fmt.Fprintf(&sb, " FROM %s", a.Table)
 		}
 		
 		if a.Where != "" {
@@ -89,7 +94,7 @@ func runClickhouseQuery(a queryArgs) ([]map[string]interface{}, error) {
 			sb.WriteString(a.OrderBy)
 		}
 		if a.Limit > 0 {
-			sb.WriteString(fmt.Sprintf(" LIMIT %d", a.Limit))
+			fmt.Fprintf(&sb, " LIMIT %d", a.Limit)
 		}
 		query = sb.String()
 	}
@@ -99,7 +104,11 @@ func runClickhouseQuery(a queryArgs) ([]map[string]interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		if err := rows.Close(); err != nil {
+			logrus.WithError(err).Warn("Error closing rows")
+		}
+	}()
 
 	cols := rows.Columns()
 	colTypes := rows.ColumnTypes()
@@ -220,7 +229,7 @@ func validateFreeformSQL(sql string) error {
 	// Strip simple quoted strings to avoid false positives when scanning tokens
 	sanitized := stripQuotedLiterals(s)
 	lower := strings.ToLower(strings.TrimSpace(sanitized))
-	if !(strings.HasPrefix(lower, "select ") || strings.HasPrefix(lower, "with ")) {
+	if !strings.HasPrefix(lower, "select ") && !strings.HasPrefix(lower, "with ") {
 		return fmt.Errorf("only SELECT/WITH queries are allowed")
 	}
 	// Disallow obvious write/DDL keywords

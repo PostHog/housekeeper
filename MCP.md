@@ -4,6 +4,8 @@
 1. Read‑only queries against configurable ClickHouse databases
 2. Querying Prometheus metrics for monitoring and correlation
 
+> **Looking for investigation guidance?** See [INVESTIGATION_PLAYBOOK.md](./INVESTIGATION_PLAYBOOK.md) for a methodology and `system.*` query patterns for diagnosing ClickHouse + ZooKeeper issues using these tools.
+
 ## Installation
 
 ### Option 1: Install via go install (Recommended)

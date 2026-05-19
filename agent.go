@@ -70,7 +70,7 @@ func QuerySystemTable(ctx context.Context, conn driver.Conn, args QuerySystemTab
 		query.WriteString("*")
 	}
 
-	query.WriteString(fmt.Sprintf(" FROM clusterAllReplicas(%s, %s)", cluster, args.Table))
+	fmt.Fprintf(&query, " FROM clusterAllReplicas(%s, %s)", cluster, args.Table)
 
 	if args.Where != "" {
 		query.WriteString(" WHERE " + args.Where)
@@ -81,14 +81,18 @@ func QuerySystemTable(ctx context.Context, conn driver.Conn, args QuerySystemTab
 	}
 
 	if args.Limit > 0 {
-		query.WriteString(fmt.Sprintf(" LIMIT %d", args.Limit))
+		fmt.Fprintf(&query, " LIMIT %d", args.Limit)
 	}
 
 	rows, err := conn.Query(ctx, query.String())
 	if err != nil {
 		return nil, fmt.Errorf("query error: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		if err := rows.Close(); err != nil {
+			logrus.WithError(err).Warn("Error closing rows")
+		}
+	}()
 
 	columns := rows.Columns()
 	columnTypes := rows.ColumnTypes()
@@ -189,7 +193,11 @@ func AnalyzeErrorsWithAgent(chErrors CHErrors) string {
 	if err != nil {
 		logrus.WithError(err).Fatal("Error connecting to ClickHouse for analysis")
 	}
-	defer conn.Close()
+	defer func() {
+		if err := conn.Close(); err != nil {
+			logrus.WithError(err).Warn("Error closing ClickHouse connection")
+		}
+	}()
 
 	systemPrompt := `You are a ClickHouse database administrator analyzing system errors.
 You have access to query any ClickHouse system table to gather more context about errors.
@@ -335,7 +343,11 @@ func AnalyzeQueryPerformanceWithAgent() string {
 	if err != nil {
 		logrus.WithError(err).Fatal("Error connecting to ClickHouse for analysis")
 	}
-	defer conn.Close()
+	defer func() {
+		if err := conn.Close(); err != nil {
+			logrus.WithError(err).Warn("Error closing ClickHouse connection")
+		}
+	}()
 
 	systemPrompt := `You are a ClickHouse database performance analyst specializing in query optimization.
 You have access to query any ClickHouse system table to analyze query performance and identify optimization opportunities.

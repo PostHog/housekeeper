@@ -278,6 +278,48 @@ func TestValidateFreeformSQL(t *testing.T) {
 			sql:     "SELECT * FROM system.query_log WHERE query = 'SELECT 1'",
 			wantErr: false,
 		},
+		{
+			name:    "CTE referenced by name in FROM",
+			sql:     "WITH slow AS (SELECT query_duration_ms FROM system.query_log WHERE query_duration_ms > 1000) SELECT count() FROM slow",
+			wantErr: false,
+		},
+		{
+			name:    "CTE referenced by name in JOIN",
+			sql:     "WITH slow AS (SELECT query_id FROM system.query_log) SELECT q.query_id FROM system.query_log q JOIN slow s ON q.query_id = s.query_id",
+			wantErr: false,
+		},
+		{
+			name:    "multiple CTEs, both referenced by name",
+			sql:     "WITH a AS (SELECT 1 AS x FROM system.one), b AS (SELECT 2 AS y FROM system.one) SELECT * FROM a JOIN b ON a.x = b.y",
+			wantErr: false,
+		},
+		{
+			name:    "CTE name does not bypass unauthorized inner table",
+			sql:     "WITH bad AS (SELECT * FROM users.data) SELECT * FROM bad",
+			wantErr: true,
+			errMsg:  "only tables from allowed databases",
+		},
+		{
+			name:    "subquery as table in FROM",
+			sql:     "SELECT t FROM (SELECT toStartOfMinute(event_time) AS t FROM system.query_log) sub",
+			wantErr: false,
+		},
+		{
+			name:    "subquery as table in JOIN",
+			sql:     "SELECT * FROM system.query_log q JOIN (SELECT query_id FROM system.processes) p ON q.query_id = p.query_id",
+			wantErr: false,
+		},
+		{
+			name:    "subquery with unauthorized inner table is rejected",
+			sql:     "SELECT * FROM (SELECT * FROM users.data) sub",
+			wantErr: true,
+			errMsg:  "only tables from allowed databases",
+		},
+		{
+			name:    "IN subquery still works",
+			sql:     "SELECT * FROM system.query_log WHERE query_id IN (SELECT query_id FROM system.processes)",
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {

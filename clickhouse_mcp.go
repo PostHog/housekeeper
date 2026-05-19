@@ -217,7 +217,8 @@ func isTableAllowed(table string) bool {
 }
 
 // validateFreeformSQL ensures the provided SQL is a single SELECT/WITH query and
-// references only allowed database tables (including inside clusterAllReplicas()).
+// references only allowed database tables (including inside clusterAllReplicas(),
+// CTEs declared via WITH, and parenthesized subqueries used as table sources).
 func validateFreeformSQL(sql string) error {
 	s := strings.TrimSpace(sql)
 	if s == "" {
@@ -240,55 +241,222 @@ func validateFreeformSQL(sql string) error {
 			return fmt.Errorf("forbidden keyword detected: %s", strings.TrimSpace(kw))
 		}
 	}
-	// Validate FROM/JOIN targets
-	tokens := []string{" from ", " join "}
-	for _, tok := range tokens {
-		idx := 0
-		for {
-			pos := strings.Index(strings.ToLower(sanitized[idx:]), strings.TrimSpace(tok))
-			if pos < 0 {
-				break
+	// Collect CTE names declared via WITH ... AS (...) so references to them
+	// from FROM/JOIN aren't treated as unauthorized table references.
+	cteNames := extractCTENames(sanitized)
+	return validateTableRefs(sanitized, cteNames)
+}
+
+// extractCTENames returns the set of CTE identifiers declared by a top-level
+// WITH clause in the (already quote-stripped) SQL. Handles both:
+//
+//	WITH name AS (SELECT ...)
+//	WITH name AS (SELECT ...), other AS (SELECT ...)
+//
+// CTE names are case-insensitive (stored lowercase). Identifiers inside
+// parenthesized subqueries are NOT collected — only top-level WITH bindings.
+func extractCTENames(sanitized string) map[string]struct{} {
+	names := map[string]struct{}{}
+	lower := strings.ToLower(sanitized)
+	if !strings.HasPrefix(strings.TrimSpace(lower), "with ") {
+		return names
+	}
+	// Find the position after the leading "with "
+	withIdx := strings.Index(lower, "with ")
+	i := withIdx + len("with ")
+	for i < len(sanitized) {
+		// Skip whitespace
+		for i < len(sanitized) && isSpace(sanitized[i]) {
+			i++
+		}
+		if i >= len(sanitized) {
+			break
+		}
+		// Read identifier
+		start := i
+		for i < len(sanitized) && isIdentChar(sanitized[i]) {
+			i++
+		}
+		if i == start {
+			break
+		}
+		name := strings.ToLower(sanitized[start:i])
+		// Skip whitespace, then expect "AS"
+		for i < len(sanitized) && isSpace(sanitized[i]) {
+			i++
+		}
+		if i+2 > len(sanitized) || strings.ToLower(sanitized[i:i+2]) != "as" {
+			// Not a CTE binding (could be a "WITH <expr> AS alias SELECT ..." scalar form).
+			// Bail out — anything we don't recognize, we don't add.
+			break
+		}
+		i += 2
+		for i < len(sanitized) && isSpace(sanitized[i]) {
+			i++
+		}
+		if i >= len(sanitized) || sanitized[i] != '(' {
+			break
+		}
+		names[name] = struct{}{}
+		// Skip the parenthesized body
+		end, ok := matchParen(sanitized, i)
+		if !ok {
+			break
+		}
+		i = end + 1
+		// Skip whitespace
+		for i < len(sanitized) && isSpace(sanitized[i]) {
+			i++
+		}
+		// If next char is ',', continue to next CTE binding. Otherwise we've
+		// reached the trailing SELECT and we're done.
+		if i < len(sanitized) && sanitized[i] == ',' {
+			i++
+			continue
+		}
+		break
+	}
+	return names
+}
+
+// validateTableRefs scans for FROM/JOIN tokens and validates each table
+// expression. Recognized forms:
+//
+//   - clusterAllReplicas(cluster, db.table) — validates db.table is allowed
+//   - db.table — validates against allowed_databases
+//   - cte_name — accepted if present in cteNames
+//   - (SELECT ...) — recursively validated as a nested query
+func validateTableRefs(sanitized string, cteNames map[string]struct{}) error {
+	lower := strings.ToLower(sanitized)
+	i := 0
+	for i < len(sanitized) {
+		// Find the next " from " or " join " keyword. We pad with a leading
+		// space so the scan also catches a FROM/JOIN at the very start (rare
+		// but possible after stripping).
+		nextFrom := indexKeyword(lower, " from ", i)
+		nextJoin := indexKeyword(lower, " join ", i)
+		next := -1
+		if nextFrom >= 0 && (nextJoin < 0 || nextFrom < nextJoin) {
+			next = nextFrom + len(" from ")
+		} else if nextJoin >= 0 {
+			next = nextJoin + len(" join ")
+		}
+		if next < 0 {
+			break
+		}
+		// Skip whitespace
+		for next < len(sanitized) && isSpace(sanitized[next]) {
+			next++
+		}
+		if next >= len(sanitized) {
+			break
+		}
+		// Subquery-as-table: ( SELECT ... ) or ( WITH ... )
+		if sanitized[next] == '(' {
+			end, ok := matchParen(sanitized, next)
+			if !ok {
+				return fmt.Errorf("unbalanced parentheses near FROM/JOIN")
 			}
-			// Move to start of table expression
-			start := idx + pos + len(strings.TrimSpace(tok))
-			// Skip spaces
-			for start < len(sanitized) && sanitized[start] == ' ' {
-				start++
-			}
-			// Capture up to first space, comma, newline, or parenthesis
-			end := start
-			for end < len(sanitized) && !strings.ContainsRune(" \n\t,)", rune(sanitized[end])) {
-				end++
-			}
-			ref := strings.TrimSpace(sanitized[start:end])
-			// Accept clusterAllReplicas(cluster, system.table)
-			if strings.HasPrefix(strings.ToLower(ref), "clusterallreplicas(") {
-				// try to extract 2nd arg
-				// naive parse: find first '(' and last ')' in this token
-				open := strings.Index(ref, "(")
-				close := strings.LastIndex(ref, ")")
-				if open > 0 && close > open {
-					inner := ref[open+1 : close]
-					parts := strings.SplitN(inner, ",", 2)
-					if len(parts) == 2 {
-						tbl := strings.TrimSpace(parts[1])
-						if !isTableAllowed(tbl) {
-							allowedDbs := getAllowedDatabases()
-							return fmt.Errorf("clusterAllReplicas must target tables from allowed databases: %v", allowedDbs)
-						}
-					}
+			inner := strings.TrimSpace(sanitized[next+1 : end])
+			innerLower := strings.ToLower(inner)
+			// Only recurse if it actually looks like a query. An IN-list like
+			// "(1,2,3)" can't appear as a FROM target, but a list of tuples
+			// could syntactically — we conservatively require SELECT/WITH.
+			if strings.HasPrefix(innerLower, "select") || strings.HasPrefix(innerLower, "with") {
+				if err := validateFreeformSQL(inner); err != nil {
+					return err
 				}
 			} else {
-				// Raw table reference must be in allowed databases
-				if !isTableAllowed(ref) {
-					allowedDbs := getAllowedDatabases()
-					return fmt.Errorf("only tables from allowed databases %v are allowed (found: %s)", allowedDbs, ref)
+				return fmt.Errorf("subquery in FROM/JOIN must be a SELECT or WITH")
+			}
+			i = end + 1
+			continue
+		}
+		// Capture up to first space, comma, newline, or parenthesis
+		start := next
+		end := start
+		for end < len(sanitized) && !strings.ContainsRune(" \n\t,)", rune(sanitized[end])) {
+			end++
+		}
+		ref := strings.TrimSpace(sanitized[start:end])
+		lowerRef := strings.ToLower(ref)
+		switch {
+		case strings.HasPrefix(lowerRef, "clusterallreplicas("):
+			// clusterAllReplicas(cluster, db.table[, ...])
+			open := strings.Index(ref, "(")
+			closeIdx := strings.LastIndex(ref, ")")
+			if open > 0 && closeIdx > open {
+				inner := ref[open+1 : closeIdx]
+				parts := strings.SplitN(inner, ",", 2)
+				if len(parts) == 2 {
+					tbl := strings.TrimSpace(parts[1])
+					// Trim a trailing comma-list (e.g. third arg) by taking up to first comma
+					if c := strings.Index(tbl, ","); c >= 0 {
+						tbl = strings.TrimSpace(tbl[:c])
+					}
+					if !isTableAllowed(tbl) {
+						allowedDbs := getAllowedDatabases()
+						return fmt.Errorf("clusterAllReplicas must target tables from allowed databases: %v", allowedDbs)
+					}
 				}
 			}
-			idx = end
+		default:
+			// CTE reference — accepted
+			if _, ok := cteNames[lowerRef]; ok {
+				break
+			}
+			// Raw table reference must be in allowed databases
+			if !isTableAllowed(ref) {
+				allowedDbs := getAllowedDatabases()
+				return fmt.Errorf("only tables from allowed databases %v are allowed (found: %s)", allowedDbs, ref)
+			}
 		}
+		i = end
 	}
 	return nil
+}
+
+// matchParen returns the index of the closing ')' that matches the opening '('
+// at position start. Quotes are assumed already stripped by stripQuotedLiterals.
+func matchParen(s string, start int) (int, bool) {
+	if start >= len(s) || s[start] != '(' {
+		return 0, false
+	}
+	depth := 0
+	for i := start; i < len(s); i++ {
+		switch s[i] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return i, true
+			}
+		}
+	}
+	return 0, false
+}
+
+// indexKeyword returns the index of the next occurrence of kw in s at or after
+// from, or -1 if not found. Treats the search as case-insensitive on the basis
+// that s is already lowercased.
+func indexKeyword(lowerS, kw string, from int) int {
+	if from >= len(lowerS) {
+		return -1
+	}
+	idx := strings.Index(lowerS[from:], kw)
+	if idx < 0 {
+		return -1
+	}
+	return from + idx
+}
+
+func isSpace(b byte) bool {
+	return b == ' ' || b == '\t' || b == '\n' || b == '\r'
+}
+
+func isIdentChar(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_'
 }
 
 func stripQuotedLiterals(s string) string {

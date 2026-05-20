@@ -1,0 +1,55 @@
+# Template for a local housekeeper instance.
+# Copy to configs/config-<env>.yml and fill in the placeholders; the real
+# files (configs/config-*.yml) are gitignored. Run with:
+#   ./housekeeper --config configs/config-<env>.yml
+
+logging:
+  level: "info"
+  format: "text"   # "text" is friendlier in a terminal; "json" for production
+
+clickhouse:
+  host: "<ch-host-fqdn>"
+  port: 9440
+  secure: true
+
+  # Connection user. Prefer a read-only user with a narrow role/profile —
+  # server-side grants are the real boundary; the MCP only enforces
+  # SELECT-only at the SQL layer.
+  user: "<read-only-user>"
+  # password injected via HOUSEKEEPER_CLICKHOUSE_PASSWORD env var
+
+  # Default database used for unqualified table references.
+  database: "<your-database>"
+
+  # Cluster name passed to clusterAllReplicas(<cluster>, system.<table>) when
+  # the MCP auto-wraps system.* queries. Must match a cluster in the server's
+  # remote_servers config.
+  cluster: "<cluster-name>"
+
+  # Databases the MCP is allowed to query. Other databases are rejected by
+  # the SQL validator regardless of the connection user's grants.
+  allowed_databases:
+    - "system"
+    - "default"
+    - "<your-database>"
+
+# Optional — only needed if you use the prometheus_query MCP tool.
+# Works with vanilla Prometheus or VictoriaMetrics (single-node or cluster).
+# prometheus:
+#   host: "localhost"
+#   port: 8481
+#   vm_cluster_mode: false   # true for VictoriaMetrics cluster mode
+#   vm_tenant_id: "0"        # only used when vm_cluster_mode is true
+#   vm_path_prefix: ""       # e.g. "prometheus" for VM cluster mode
+
+http:
+  addr: ":8080"
+  # Bearer token clients must present. Leave empty to disable bearer auth
+  # and rely on a network-level identity gate (firewall, VPN, Tailscale,
+  # authenticating proxy, or localhost binding). See README "Security Notes".
+  auth_token: ""
+
+# Optional — only used in --analyze mode (not the HTTP MCP server).
+# gemini_key: "..."
+# slack:
+#   webhook_url: "..."

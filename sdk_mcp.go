@@ -151,10 +151,10 @@ func runHTTPMCPServer(srv *mcp.Server) error {
 
 	if authToken != "" {
 		mux.Handle("/", bearerAuthMiddleware(authToken, streamHandler))
-		logrus.Info("HTTP authentication enabled")
+		logrus.Info("HTTP authentication enabled (bearer token)")
 	} else {
 		mux.Handle("/", streamHandler)
-		logrus.Warn("HTTP authentication is disabled — consider setting http.auth_token")
+		logrus.Info("HTTP authentication disabled (no auth_token configured)")
 	}
 
 	// Wrap everything with CORS + request logging.

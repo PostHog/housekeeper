@@ -32,6 +32,9 @@ go.work.sum
 # .vscode/
 
 configs/config.yml
+# Env-specific configs — only the *.yml.example templates are committed.
+configs/config-*.yml
+!configs/config-*.yml.example
 __debug*
 docker/
 .claude/

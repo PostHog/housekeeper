@@ -196,10 +196,9 @@ clickhouse:
 
 ## 🔒 Security Notes
 
-- **Read-Only Access**: MCP server enforces read-only queries to configured databases
-- **No DDL Operations**: Write operations and DDL statements are blocked
-- **Bearer Auth**: Protect the HTTP endpoint with `--http-auth-token` in production
-- **Credential Safety**: Never commit `configs/config.yml` (it's in `.gitignore`)
+- **Read-Only**: SELECT-only at the SQL layer; DDL and writes are blocked. Server-side role/profile is the real boundary.
+- **Authentication**: Set `--http-auth-token` (or `HOUSEKEEPER_HTTP_AUTH_TOKEN`) for bearer auth, or leave unset and front housekeeper with a network-level identity gate.
+- **Credentials**: `configs/config*.yml` are gitignored. Only `*.example`/`*.sample` templates are tracked.
 
 ---
 

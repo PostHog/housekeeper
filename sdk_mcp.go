@@ -28,8 +28,32 @@ func RunMCPServer() error {
 	// Build description with allowed databases
 	allowedDbs := getAllowedDatabases()
 	dbList := strings.Join(allowedDbs, ", ")
-	toolDesc := fmt.Sprintf("Read-only queries against ClickHouse databases (%s). IMPORTANT: Only use clusterAllReplicas for system.* tables to get cluster-wide data. For non-system databases, query directly without clusterAllReplicas", dbList)
-	
+	toolDesc := fmt.Sprintf(`Read-only queries against ClickHouse databases (%s).
+
+Query patterns:
+- system.* tables are per-node — wrap in clusterAllReplicas('<cluster>', system.<table>) for cluster-wide visibility.
+- For user-database tables: replicated tables (same data on every replica) should be queried directly to avoid duplicates; sharded tables (different data per shard) need clusterAllReplicas to see everything. Check system.tables.engine if unsure, or test counts both ways.
+- Prefer structured fields (table, columns, where, order_by, limit); use sql for joins/aggregations/CTEs.
+
+Validator limitations:
+- Only db.table and clusterAllReplicas('cluster', db.table) table references are accepted. cluster() and remote() are blocked.
+- Some columns may be REVOKED on the connected role (query text, secrets, etc.). Identify queries by normalized_query_hash + structural metadata columns instead.
+
+Cluster identifiers vary per deployment — check system.clusters.
+
+Investigation tips:
+- Calibrate memory_usage / read_bytes against the cluster's actual node size before flagging as concerning.
+- Many apps tag queries with log_comment metadata, often surfaced as lc_* columns (e.g. lc_product, lc_workflow). These attribute a normalized_query_hash to the owning service/job/team in one query.
+- normalized_query_hash collapses identical queries with different literals. count() + sum(query_duration_ms) GROUP BY normalized_query_hash is the canonical "what's hammering us" query.`, dbList)
+
+	// Operators can append deployment-specific guidance (instance sizes, owning
+	// teams, common patterns) via mcp.extra_tool_description in config or the
+	// HOUSEKEEPER_MCP_EXTRA_TOOL_DESCRIPTION env var. This lets PostHog (or any
+	// org) ship private context without forking the public description.
+	if extra := strings.TrimSpace(viper.GetString("mcp.extra_tool_description")); extra != "" {
+		toolDesc = toolDesc + "\n\nDeployment-specific guidance:\n" + extra
+	}
+
 	// Register ClickHouse tool with inferred input schema (from queryArgs)
 	mcp.AddTool[queryArgs, map[string]any](
 		srv,

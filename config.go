@@ -41,6 +41,11 @@ func loadConfig(explicitPath string) error {
 	viper.SetDefault("http.addr", ":8080")
 	viper.SetDefault("http.auth_token", "")
 
+	// Optional deployment-specific guidance appended to the clickhouse_query tool
+	// description. Lets operators ship private context (instance sizes, common
+	// query patterns, owning teams) without forking the upstream description.
+	viper.SetDefault("mcp.extra_tool_description", "")
+
 	if explicitPath == "" {
 		if env := os.Getenv("HOUSEKEEPER_CONFIG"); env != "" {
 			explicitPath = env

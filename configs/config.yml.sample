@@ -27,3 +27,10 @@ prometheus:
 http:
   addr: ":8080"           # Listen address
   auth_token: ""          # Bearer token clients must present (leave empty to disable auth)
+
+# Optional: deployment-specific guidance appended to the clickhouse_query tool
+# description visible to MCP clients. Useful for adding instance-size context,
+# common query patterns, or owning-team callouts without forking the binary.
+# Env var equivalent: HOUSEKEEPER_MCP_EXTRA_TOOL_DESCRIPTION
+mcp:
+  extra_tool_description: ""

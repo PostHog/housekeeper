@@ -4,12 +4,18 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 )
+
+// maxSafeJSONInt = 2^53-1; integers beyond this lose precision in JSON's
+// double-precision representation, breaking round-trip filtering on IDs like
+// normalized_query_hash.
+const maxSafeJSONInt = 1<<53 - 1
 
 // JSON-RPC transport types
 type queryArgs struct {
@@ -166,9 +172,17 @@ func normalizeValue(v interface{}) interface{} {
 	case bool:
 		return t
 	case int, int8, int16, int32, int64:
-		return reflect.ValueOf(t).Int()
+		i := reflect.ValueOf(t).Int()
+		if i > maxSafeJSONInt || i < -maxSafeJSONInt {
+			return strconv.FormatInt(i, 10)
+		}
+		return i
 	case uint, uint8, uint16, uint32, uint64:
-		return reflect.ValueOf(t).Uint()
+		u := reflect.ValueOf(t).Uint()
+		if u > maxSafeJSONInt {
+			return strconv.FormatUint(u, 10)
+		}
+		return u
 	case float32, float64:
 		return reflect.ValueOf(t).Float()
 	case time.Time:

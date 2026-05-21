@@ -83,13 +83,35 @@ Investigation tips:
 		},
 	)
 
-	// Register Prometheus tool
+	defaultPromDesc := `Execute PromQL range queries against Prometheus metrics.
+
+start/end: RFC3339 UTC or relative ("-30m", "-1h"). end defaults to now(). Future timestamps are rejected. Prefer relative ("-30m") when the current time isn't known.
+step: Go duration ("30s", "1m"). Pick one that yields <~50 points over the window.`
+	if hasClickhousePromEndpoint() {
+		defaultPromDesc += "\n\nFor ClickHouse-internal metrics (ClickHouseMetrics_*, ClickHouseProfileEvents_*, ClickHouseAsyncMetrics_*) prefer prometheus_query_clickhouse — it hits a dedicated endpoint with higher scrape resolution."
+	}
+	registerPrometheusTool(srv, "prometheus_query", "Query Prometheus metrics", defaultPromDesc, defaultPromEndpoint)
+
+	if hasClickhousePromEndpoint() {
+		chDesc := `Execute PromQL range queries against the ClickHouse-internal Prometheus endpoint (typically 15s scrape, native CH labels: type, shard, replica, instance, ready).
+
+Use this for ClickHouseMetrics_*, ClickHouseProfileEvents_*, ClickHouseAsyncMetrics_*. For K8s/fleet metrics (kube_*, container_*, node_*, kminion_*) use prometheus_query instead.
+
+start/end: RFC3339 UTC or relative ("-30m", "-1h"). end defaults to now(). Future timestamps are rejected.
+step: Go duration ("15s", "30s", "1m"). 15s exploits the upstream's native resolution.`
+		registerPrometheusTool(srv, "prometheus_query_clickhouse", "Query ClickHouse-internal Prometheus", chDesc, chPromEndpoint)
+	}
+
+	return runHTTPMCPServer(srv)
+}
+
+func registerPrometheusTool(srv *mcp.Server, name, title, description, endpoint string) {
 	mcp.AddTool[prometheusArgs, map[string]any](
 		srv,
 		&mcp.Tool{
-			Name:        "prometheus_query",
-			Title:       "Query Prometheus metrics",
-			Description: "Execute PromQL queries against Prometheus metrics",
+			Name:        name,
+			Title:       title,
+			Description: description,
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		},
 		func(ctx context.Context, ss *mcp.ServerSession, req *mcp.CallToolParamsFor[prometheusArgs]) (*mcp.CallToolResultFor[map[string]any], error) {
@@ -98,9 +120,6 @@ Investigation tips:
 			if pa.Query == "" {
 				return nil, fmt.Errorf("query is required")
 			}
-
-			var result interface{}
-			var err error
 
 			start, end, err := validateAndParseTimeRange(pa.Start, pa.End)
 			if err != nil {
@@ -112,14 +131,13 @@ Investigation tips:
 				return nil, fmt.Errorf("invalid step duration: %v", err)
 			}
 
-			result, err = queryPrometheus(pa.Query, start, end, step)
+			result, err := queryPrometheus(endpoint, pa.Query, start, end, step)
 			if err != nil {
 				return nil, err
 			}
 
 			data := map[string]any{"result": result}
 
-			// Create a simple summary showing the raw values
 			var summary string
 			if resultMap, ok := result.(map[string]interface{}); ok {
 				if lastValues, ok := resultMap["last_values"].([]map[string]interface{}); ok && len(lastValues) > 0 {
@@ -145,8 +163,6 @@ Investigation tips:
 			}, nil
 		},
 	)
-
-	return runHTTPMCPServer(srv)
 }
 
 // runHTTPMCPServer starts the MCP server over HTTP using the streamable HTTP transport.

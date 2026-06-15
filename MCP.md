@@ -1,8 +1,9 @@
 # ClickHouse MCP Server Documentation
 
-**Housekeeper runs as an MCP server by default** - no flags needed! This document covers the complete MCP implementation that exposes tools for:
+**Housekeeper runs as an MCP server by default** - no flags needed! It serves MCP over HTTP (streamable HTTP transport); connect a client such as Claude Desktop via [mcp-remote](https://github.com/geelen/mcp-remote). This document covers the complete MCP implementation that exposes tools for:
 1. Read‑only queries against configurable ClickHouse databases
 2. Querying Prometheus metrics for monitoring and correlation
+3. (Optional) Querying a separate Prometheus endpoint for ClickHouse-internal metrics
 
 > **Looking for investigation guidance?** See [INVESTIGATION_PLAYBOOK.md](./INVESTIGATION_PLAYBOOK.md) for a methodology and `system.*` query patterns for diagnosing ClickHouse + ZooKeeper issues using these tools.
 
@@ -68,8 +69,9 @@ Available flags:
 - Uses `configs/config.yml` (Viper) — copy and edit `configs/config.yml.sample`.
 - You can point to a custom path with `-config /path/to/config.yml` or env `HOUSEKEEPER_CONFIG=/path/to/config.yml`.
 - Required keys for ClickHouse: `clickhouse.host`, `clickhouse.port`, `clickhouse.user`, `clickhouse.password`, `clickhouse.database`, `clickhouse.cluster`.
-  - The DB user should be read‑only; server enforces queries to `system.*` tables only.
+  - The DB user should be read‑only; queries are restricted to the configured `clickhouse.allowed_databases` (defaults to `["system"]`).
 - Required keys for Prometheus: `prometheus.host`, `prometheus.port`.
+- Optional `prometheus_clickhouse.*` keys (config-file only, no CLI flag): set `prometheus_clickhouse.host` to register the `prometheus_query_clickhouse` tool against a dedicated ClickHouse-internal metrics endpoint.
 
 ### Victoria Metrics from Kubernetes
 
@@ -80,12 +82,13 @@ kubectl port-forward --namespace=monitoring svc/vmcluster-victoria-metrics-clust
 ```
 
 
-## Running (stdio)
+## Running (HTTP)
 
-The server uses the official go-sdk and speaks MCP over stdio (JSON-RPC framed with Content-Length), suitable for clients like Claude Desktop.
+The server uses the official go-sdk and serves MCP over HTTP using the streamable HTTP transport. It listens on `http.addr` (default `:8080`), exposes the MCP endpoint at `POST /`, and a `GET /health` check for liveness probes (no auth; returns a static `ok`). Connect stdio-only clients (e.g. Claude Desktop) via [mcp-remote](https://github.com/geelen/mcp-remote).
 
-- **Default mode**: `./housekeeper` (runs as MCP server)
+- **Default mode**: `./housekeeper` (runs the HTTP MCP server)
 - **Analysis mode**: `./housekeeper --analyze` (runs Gemini AI analysis)
+- Optional bearer auth: set `http.auth_token` (or `--http-auth-token`) and clients must present it.
 - Methods implemented:
   - `initialize`
   - `tools/list`
@@ -117,6 +120,13 @@ The server uses the official go-sdk and speaks MCP over stdio (JSON-RPC framed w
   - `start` (optional): Start time in RFC3339 format or relative time (e.g. "-1h")
   - `end` (optional): End time in RFC3339 format or relative time (e.g. "-1h")
   - `step` (optional): Step duration (e.g. "15s", "1m", "1h") (default: "1m")
+
+### Tool: prometheus_query_clickhouse (optional)
+
+- Name: `prometheus_query_clickhouse`
+- Description: Same PromQL interface as `prometheus_query`, but targets a separate endpoint dedicated to ClickHouse-internal metrics (`ClickHouseMetrics_*`, `ClickHouseProfileEvents_*`, `ClickHouseAsyncMetrics_*`).
+- Registration: only exposed when `prometheus_clickhouse.host` is set in config.
+- Arguments: identical to `prometheus_query`.
 
 ## Example tools/call
 
@@ -189,82 +199,62 @@ Response (truncated):
 
 ## Claude Desktop Integration
 
-### Quick Setup (After go install)
+Housekeeper serves MCP over HTTP, so Claude Desktop connects to it through [mcp-remote](https://github.com/geelen/mcp-remote) rather than spawning the binary directly.
 
-1. Install the housekeeper binary:
+### 1. Start the housekeeper server
+
+Run it locally with flags:
+
 ```bash
-go install github.com/PostHog/housekeeper@latest
+housekeeper \
+  --ch-host "127.0.0.1" \
+  --ch-port 9000 \
+  --ch-user "default" \
+  --ch-password "your-password" \
+  --ch-database "default" \
+  --ch-cluster "default" \
+  --prom-host "localhost" \
+  --prom-port 8481
 ```
 
-2. Find your Claude Desktop config file:
-   - macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
-   - Windows: `%APPDATA%\Claude\claude_desktop_config.json`
-   - Linux: `~/.config/claude/claude_desktop_config.json`
+…or with a config file:
 
-3. Add to your Claude Desktop config:
+```bash
+housekeeper --config /path/to/your/config.yml
+```
+
+This listens on `http.addr` (default `:8080`). It can also be a remote/deployed instance reachable over your network.
+
+### 2. Point Claude Desktop at it
+
+Find your Claude Desktop config file:
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+- Linux: `~/.config/claude/claude_desktop_config.json`
+
+Add an `mcp-remote` entry pointing at the server's URL:
 
 ```json
 {
   "mcpServers": {
-    "clickhouse-local": {
-      "command": "housekeeper",
-      "args": [
-        "--ch-host", "127.0.0.1",
-        "--ch-port", "9000",
-        "--ch-user", "default",
-        "--ch-password", "your-password",
-        "--ch-database", "default",
-        "--ch-cluster", "default",
-        "--prom-host", "localhost",
-        "--prom-port", "8481"
-      ]
+    "housekeeper": {
+      "command": "npx",
+      "args": ["mcp-remote", "http://localhost:8080"],
+      "env": {
+        "PATH": "/path/to/node/v20+/bin:/usr/local/bin:/usr/bin:/bin"
+      }
     }
   }
 }
 ```
 
-### Alternative: Using absolute path
+> **Note:** mcp-remote requires Node.js v20+. If you manage Node with nvm, hardcode the path so Claude Desktop doesn't pick up an older version. If the server has `http.auth_token` set, pass it via mcp-remote's `--header` argument (e.g. `"--header", "Authorization: Bearer <token>"`).
 
-If `housekeeper` is not in your PATH, use the absolute path:
-
-```json
-{
-  "mcpServers": {
-    "clickhouse-local": {
-      "command": "/Users/yourusername/go/bin/housekeeper",
-      "args": [
-        "--ch-host", "127.0.0.1",
-        "--ch-port", "9000",
-        "--ch-user", "default",
-        "--ch-password", "your-password",
-        "--ch-database", "default",
-        "--ch-cluster", "default"
-      ]
-    }
-  }
-}
-```
-
-### Using with config file
-
-If you prefer using a config file:
-
-```json
-{
-  "mcpServers": {
-    "clickhouse-prod": {
-      "command": "housekeeper",
-      "args": ["--config", "/path/to/your/config.yml"]
-    }
-  }
-}
-```
-
-4. Restart Claude Desktop for the changes to take effect.
+### 3. Restart Claude Desktop for the changes to take effect.
 
 ## Notes
 
-- Queries are restricted to `system.*` tables and reject multi‑statement inputs.
-- The server uses `clusterAllReplicas(<cluster>, <system.table>)` for cluster‑wide visibility.
+- Queries are restricted to the configured `allowed_databases` (defaults to `system`) and reject multi‑statement inputs.
+- For `system.*` tables the server uses `clusterAllReplicas(<cluster>, <system.table>)` for cluster‑wide visibility; non-system tables are queried directly.
 - If building fails initially, run `go mod tidy` to fetch `github.com/modelcontextprotocol/go-sdk`.
 - The DB user should be read‑only for security.

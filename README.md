@@ -8,6 +8,7 @@ Housekeeper runs as an HTTP MCP server, providing AI assistants like Claude with
 
 - **ClickHouse Queries**: Read-only access to configurable databases (defaults to `system.*` tables)
 - **Prometheus/Victoria Metrics**: Execute PromQL queries for metrics correlation and analysis
+- **ClickHouse-internal metrics (optional)**: Configure a second Prometheus/Victoria Metrics endpoint to expose a dedicated `prometheus_query_clickhouse` tool
 - **Smart Cluster Querying**: Automatic use of `clusterAllReplicas()` for system tables only (non-system tables are queried directly)
 
 ---
@@ -77,6 +78,9 @@ Example requests:
 - "Show me memory usage trends for the past hour"
 - "Find nodes with high CPU usage"
 
+### `prometheus_query_clickhouse` (optional)
+Same PromQL interface as `prometheus_query`, but targets a separate endpoint dedicated to ClickHouse-internal metrics (`ClickHouseMetrics_*`, `ClickHouseProfileEvents_*`, `ClickHouseAsyncMetrics_*`). Only registered when `prometheus_clickhouse.host` is set in config (see [Configuration](#️-configuration)). Use `prometheus_query` for general fleet/host metrics and `prometheus_query_clickhouse` for ClickHouse server internals.
+
 ---
 
 ## 🔍 Investigation Playbook
@@ -136,10 +140,20 @@ clickhouse:
 prometheus:
   host: "localhost"
   port: 8481
+  # Victoria Metrics cluster mode (optional)
+  vm_cluster_mode: false
+  vm_tenant_id: "0"
+  vm_path_prefix: ""
+# Optional: enables the prometheus_query_clickhouse tool when host is set
+prometheus_clickhouse:
+  host: ""
+  port: 9091
 http:
   addr: ":8080"
   auth_token: "your-secret-token"
 ```
+
+See [`configs/config.yml.sample`](configs/config.yml.sample) for the full set of options, including `logging` and the optional `mcp.extra_tool_description`.
 
 Then run:
 ```bash

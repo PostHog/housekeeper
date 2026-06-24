@@ -63,10 +63,8 @@ func loadConfig(explicitPath string) error {
 	viper.SetDefault("bedrock.max_iterations", 8)
 	viper.SetDefault("bedrock.temperature", 0.2)
 
-	// Elevated ClickHouse connection used ONLY by the server-side diagnose agent
-	// (the housekeeper_analyst role — full grants incl. raw query text). Empty
-	// fields fall back to the restricted clickhouse.* connection, in which case
-	// raw query text stays unavailable.
+	// Optional separate ClickHouse connection used only by the server-side
+	// diagnose agent. Empty fields fall back to the clickhouse.* connection.
 	viper.SetDefault("analyst_clickhouse.host", "")
 	viper.SetDefault("analyst_clickhouse.port", 0)
 	viper.SetDefault("analyst_clickhouse.user", "")

@@ -26,12 +26,10 @@ type diagnoseArgs struct {
 // huge slice of customer data into the prompt.
 const maxToolResultChars = 12000
 
-// connectAnalyst opens the elevated ClickHouse connection used ONLY by the
-// server-side diagnose agent. It uses analyst_clickhouse.* config (the
-// housekeeper_analyst role — full grants, raw query text), falling back to the
-// restricted clickhouse.* connection if no analyst user is configured. Because
-// this connection's output never leaves the account (only the model's summary
-// does), it is safe for it to read raw query text.
+// connectAnalyst opens the ClickHouse connection used by the server-side diagnose
+// agent. It uses analyst_clickhouse.* config, falling back to the clickhouse.*
+// connection when no analyst user is set. Results stay server-side — only the
+// model's summary is returned to the client.
 func connectAnalyst() (driver.Conn, error) {
 	host := viper.GetString("analyst_clickhouse.host")
 	if host == "" {
@@ -44,10 +42,10 @@ func connectAnalyst() (driver.Conn, error) {
 	user := viper.GetString("analyst_clickhouse.user")
 	password := viper.GetString("analyst_clickhouse.password")
 	if user == "" {
-		// No dedicated analyst credentials — fall back to the restricted role.
+		// No dedicated analyst credentials — fall back to the default connection.
 		user = viper.GetString("clickhouse.user")
 		password = viper.GetString("clickhouse.password")
-		logrus.Warn("diagnose: analyst_clickhouse.user not set; falling back to restricted clickhouse user (raw query text will be unavailable)")
+		logrus.Warn("diagnose: analyst_clickhouse.user not set; using the default clickhouse connection")
 	}
 	database := viper.GetString("analyst_clickhouse.database")
 	if database == "" {
@@ -153,21 +151,21 @@ Querying:
 
 Output rules:
 - Investigate efficiently: a handful of targeted queries, not dozens. Aggregate; never SELECT * without a tight LIMIT.
-- You may read raw query text to understand a problem, but your ANSWER MUST NOT reproduce raw query text, literals, PII, or other user-supplied content. Refer to queries by normalized_query_hash and attribution columns instead.
+- Your answer MUST NOT reproduce raw query text, literals, PII, or other user-supplied content. Refer to queries by normalized_query_hash and attribution columns instead.
 - Lead with the diagnosis and the evidence (numbers), then concrete next steps.
 
 Deployment-specific details (databases, tables, clusters, node sizes) are appended below when configured.`
 
 // registerDiagnoseTool adds the in-MCP, Bedrock-backed diagnose tool. The model
-// runs server-side, queries ClickHouse with the elevated analyst connection, and
-// only its summary is returned to the client.
+// runs server-side, queries ClickHouse with the analyst connection, and only its
+// summary is returned to the client.
 func registerDiagnoseTool(srv *mcp.Server) {
 	system := diagnoseSystemPrompt
 	if extra := strings.TrimSpace(viper.GetString("mcp.extra_tool_description")); extra != "" {
 		system += "\n\nDeployment-specific context:\n" + extra
 	}
 
-	desc := `Ask a natural-language question about ClickHouse health and get an investigated, attributed diagnosis. Runs an in-account LLM agent that queries the cluster server-side with elevated grants (full query-log + attribution) and returns only a summary — raw query text never leaves the account. Use for "why is X slow / lagging / erroring", "what's driving load on <cluster>", "who owns this query pattern". For raw row access use clickhouse_query instead.`
+	desc := `Ask a natural-language question about ClickHouse health and get an investigated, attributed diagnosis. Runs an in-account LLM agent that investigates server-side and returns only a summary. Use for "why is X slow / lagging / erroring", "what's driving load on <cluster>", "who owns this query pattern". For raw row access use clickhouse_query instead.`
 
 	mcp.AddTool[diagnoseArgs, map[string]any](
 		srv,

@@ -44,9 +44,8 @@ type bedrockTool struct {
 type toolHandler func(name string, input map[string]any) (string, error)
 
 // runBedrockAgent drives a Converse tool-use loop until the model produces a
-// final text answer (or the iteration budget is exhausted). The returned string
-// is the model's natural-language answer — the only thing that leaves the
-// account. Raw rows fetched via tools stay server-side.
+// final text answer (or the iteration budget is exhausted). It returns that
+// final text; tool results are consumed within the loop and not returned.
 func runBedrockAgent(
 	ctx context.Context,
 	client *bedrockruntime.Client,

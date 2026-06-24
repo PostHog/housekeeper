@@ -102,6 +102,14 @@ step: Go duration ("15s", "30s", "1m"). 15s exploits the upstream's native resol
 		registerPrometheusTool(srv, "prometheus_query_clickhouse", "Query ClickHouse-internal Prometheus", chDesc, chPromEndpoint)
 	}
 
+	// Optional: in-account, Bedrock-backed agentic diagnosis tool. Only exposed
+	// when bedrock.region + bedrock.model_id are configured. Runs server-side
+	// with the elevated analyst connection and returns only a summary.
+	if bedrockEnabled() {
+		registerDiagnoseTool(srv)
+		logrus.Info("diagnose tool enabled (Bedrock in-account analysis)")
+	}
+
 	return runHTTPMCPServer(srv)
 }
 

@@ -45,3 +45,28 @@ http:
 # Env var equivalent: HOUSEKEEPER_MCP_EXTRA_TOOL_DESCRIPTION
 mcp:
   extra_tool_description: ""
+
+# Optional: in-account Bedrock-backed diagnose tool. When both
+# region and model_id are set, the MCP exposes a server-side agent that
+# investigates the cluster with elevated grants and returns only a summary —
+# raw query text never leaves the account. Credentials come from the default
+# AWS chain (in-cluster: the pod's IRSA role; no static keys).
+# Env var equivalents: HOUSEKEEPER_BEDROCK_REGION, HOUSEKEEPER_BEDROCK_MODEL_ID
+bedrock:
+  region: ""             # AWS region for Bedrock (match the data's region)
+  model_id: ""           # Bedrock model or inference-profile id (set per deployment)
+  max_tokens: 2048
+  max_iterations: 8      # max run_sql round-trips per diagnosis
+  temperature: 0.2
+
+# Elevated ClickHouse connection used ONLY by the diagnose agent (the
+# housekeeper_analyst role: full grants incl. raw query text). Leave user empty
+# to fall back to the restricted clickhouse.* connection above (in which case
+# raw query text is unavailable to the agent).
+# Env var equivalents: HOUSEKEEPER_ANALYST_CLICKHOUSE_USER, ..._PASSWORD
+analyst_clickhouse:
+  host: ""               # empty = reuse clickhouse.host
+  port: 0                # 0 = reuse clickhouse.port
+  user: ""               # e.g. "housekeeper_analyst"
+  password: ""
+  database: ""           # empty = reuse clickhouse.database

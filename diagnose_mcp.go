@@ -21,15 +21,13 @@ type diagnoseArgs struct {
 	Cluster  string `json:"cluster,omitempty"`
 }
 
-// maxToolResultChars caps how much row data we feed back to the model per
-// run_sql call, so a careless SELECT can't blow the context window or ship a
-// huge slice of customer data into the prompt.
+// maxToolResultChars caps how much row data a single run_sql result feeds back
+// to the model, bounding context size and tool-result payloads.
 const maxToolResultChars = 12000
 
-// connectAnalyst opens the ClickHouse connection used by the server-side diagnose
-// agent. It uses analyst_clickhouse.* config, falling back to the clickhouse.*
-// connection when no analyst user is set. Results stay server-side — only the
-// model's summary is returned to the client.
+// connectAnalyst opens the ClickHouse connection used by the diagnose agent. It
+// uses analyst_clickhouse.* config, falling back to the clickhouse.* connection
+// when no analyst user is set.
 func connectAnalyst() (driver.Conn, error) {
 	host := viper.GetString("analyst_clickhouse.host")
 	if host == "" {
@@ -157,8 +155,7 @@ Output rules:
 Deployment-specific details (databases, tables, clusters, node sizes) are appended below when configured.`
 
 // registerDiagnoseTool adds the in-MCP, Bedrock-backed diagnose tool. The model
-// runs server-side, queries ClickHouse with the analyst connection, and only its
-// summary is returned to the client.
+// queries ClickHouse via the analyst connection and the tool returns its summary.
 func registerDiagnoseTool(srv *mcp.Server) {
 	system := diagnoseSystemPrompt
 	if extra := strings.TrimSpace(viper.GetString("mcp.extra_tool_description")); extra != "" {

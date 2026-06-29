@@ -208,13 +208,6 @@ func runHTTPMCPServer(srv *mcp.Server) error {
 	// Wrap everything with CORS + request logging.
 	handler := requestLoggingMiddleware(corsMiddleware(mux))
 
-	// Bump to debug so request logs are visible during troubleshooting.
-	// Users can lower this via config once things are working.
-	if logrus.GetLevel() < logrus.DebugLevel {
-		logrus.SetLevel(logrus.DebugLevel)
-		logrus.Debug("Log level raised to debug for HTTP mode (set logging.level in config to suppress)")
-	}
-
 	logrus.WithFields(logrus.Fields{
 		"addr":       addr,
 		"mcp_url":    "http://<host>" + addr + "/",
@@ -225,18 +218,21 @@ func runHTTPMCPServer(srv *mcp.Server) error {
 	return http.ListenAndServe(addr, handler)
 }
 
-// requestLoggingMiddleware logs every incoming HTTP request.
+// requestLoggingMiddleware logs every incoming HTTP request (except health checks).
 func requestLoggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		logrus.WithFields(logrus.Fields{
-			"method":      r.Method,
-			"path":        r.URL.RequestURI(),
-			"remote_addr": r.RemoteAddr,
-			"user_agent":  r.Header.Get("User-Agent"),
-			"accept":      r.Header.Get("Accept"),
-			"origin":      r.Header.Get("Origin"),
-			"has_auth":    r.Header.Get("Authorization") != "",
-		}).Debug("Incoming request")
+		// Skip health-check noise (ELB + kube-probe poll every few seconds).
+		if r.URL.Path != "/health" {
+			logrus.WithFields(logrus.Fields{
+				"method":      r.Method,
+				"path":        r.URL.RequestURI(),
+				"remote_addr": r.RemoteAddr,
+				"user_agent":  r.Header.Get("User-Agent"),
+				"accept":      r.Header.Get("Accept"),
+				"origin":      r.Header.Get("Origin"),
+				"has_auth":    r.Header.Get("Authorization") != "",
+			}).Debug("Incoming request")
+		}
 		next.ServeHTTP(w, r)
 	})
 }

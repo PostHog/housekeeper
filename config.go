@@ -53,6 +53,24 @@ func loadConfig(explicitPath string) error {
 	// query patterns, owning teams) without forking the upstream description.
 	viper.SetDefault("mcp.extra_tool_description", "")
 
+	// Bedrock-backed in-MCP diagnose tool. Empty region/model_id disables the
+	// diagnose tool. model_id is a Bedrock model or inference-profile
+	// id, set per deployment (e.g. via HOUSEKEEPER_BEDROCK_MODEL_ID). Credentials
+	// come from the default AWS credential chain.
+	viper.SetDefault("bedrock.region", "")
+	viper.SetDefault("bedrock.model_id", "")
+	viper.SetDefault("bedrock.max_tokens", 2048)
+	viper.SetDefault("bedrock.max_iterations", 8)
+	viper.SetDefault("bedrock.temperature", 0.2)
+
+	// Optional separate ClickHouse connection used only by the server-side
+	// diagnose agent. Empty fields fall back to the clickhouse.* connection.
+	viper.SetDefault("analyst_clickhouse.host", "")
+	viper.SetDefault("analyst_clickhouse.port", 0)
+	viper.SetDefault("analyst_clickhouse.user", "")
+	viper.SetDefault("analyst_clickhouse.password", "")
+	viper.SetDefault("analyst_clickhouse.database", "")
+
 	if explicitPath == "" {
 		if env := os.Getenv("HOUSEKEEPER_CONFIG"); env != "" {
 			explicitPath = env

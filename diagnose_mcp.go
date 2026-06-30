@@ -239,6 +239,7 @@ func registerDiagnoseTool(srv *mcp.Server) {
 				[]bedrockTool{runSQL}, handle,
 				int32(viper.GetInt("bedrock.max_tokens")),
 				int32(viper.GetInt("bedrock.max_iterations")),
+				int32(viper.GetInt("bedrock.max_seconds")),
 				float32(viper.GetFloat64("bedrock.temperature")),
 			)
 			if err != nil {

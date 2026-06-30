@@ -59,6 +59,7 @@ bedrock:
   model_id: ""           # Bedrock model or inference-profile id (set per deployment)
   max_tokens: 2048
   max_iterations: 8      # max run_sql round-trips per diagnosis
+  max_seconds: 25        # wall-clock budget; on exceed, summarize instead of timing out (0 = off)
   temperature: 0.2
 
 # Optional separate ClickHouse connection used only by the diagnose agent.

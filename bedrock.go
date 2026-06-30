@@ -92,13 +92,11 @@ func runBedrockAgent(
 				Temperature: aws.Float32(temperature),
 			},
 		}
-		// Within the time budget the model may call tools; once exceeded, withhold
-		// them so it must summarize on this turn instead of investigating further.
-		if maxSeconds == 0 || time.Now().Before(deadline) {
-			convInput.ToolConfig = toolCfg
-		} else {
-			timedOut = true
-		}
+		// ToolConfig must always be set — Bedrock rejects a request whose history
+		// contains tool blocks if it's omitted. When the wall-clock budget is
+		// exceeded we instead nudge the model (below) to stop and summarize.
+		convInput.ToolConfig = toolCfg
+		overBudget := maxSeconds > 0 && !time.Now().Before(deadline)
 		out, err := client.Converse(ctx, convInput)
 		if err != nil {
 			return "", fmt.Errorf("bedrock converse: %w", err)
@@ -159,7 +157,15 @@ func runBedrockAgent(
 			return finalText, nil
 		}
 
-		// Feed tool results back and let the model continue.
+		// Feed tool results back. If we're over the time budget, append a nudge so
+		// the model stops investigating and summarizes on its next turn (tools stay
+		// available — we can't withhold them once history has tool blocks).
+		if overBudget {
+			timedOut = true
+			toolResults = append(toolResults, &types.ContentBlockMemberText{
+				Value: "Time budget reached — do not call any more tools; give your final summary of findings now.",
+			})
+		}
 		messages = append(messages, types.Message{
 			Role:    types.ConversationRoleUser,
 			Content: toolResults,

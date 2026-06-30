@@ -48,10 +48,13 @@ func loadConfig(explicitPath string) error {
 	viper.SetDefault("http.addr", ":8080")
 	viper.SetDefault("http.auth_token", "")
 
-	// Optional deployment-specific guidance appended to the clickhouse_query tool
-	// description. Lets operators ship private context (instance sizes, common
-	// query patterns, owning teams) without forking the upstream description.
+	// Deployment-specific guidance. extra_tool_description is shared facts
+	// appended to BOTH clickhouse_query and the diagnose agent (topology,
+	// clusters, attribution columns, query patterns). query_extra_description is
+	// appended ONLY to clickhouse_query — for restricted-route caveats (column
+	// REVOKEs, etc.) that don't apply to the elevated diagnose connection.
 	viper.SetDefault("mcp.extra_tool_description", "")
+	viper.SetDefault("mcp.query_extra_description", "")
 
 	// Bedrock-backed in-MCP diagnose tool. Empty region/model_id disables the
 	// diagnose tool. model_id is a Bedrock model or inference-profile

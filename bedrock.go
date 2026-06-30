@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -44,15 +45,16 @@ type bedrockTool struct {
 type toolHandler func(name string, input map[string]any) (string, error)
 
 // runBedrockAgent drives a Converse tool-use loop until the model produces a
-// final text answer (or the iteration budget is exhausted). It returns that
-// final text; tool results are consumed within the loop and not returned.
+// final answer or a limit is hit (iteration count or wall-clock budget). When
+// the time budget is exceeded it makes one final tool-free turn so the model
+// summarizes what it found rather than timing out the caller. Returns that text.
 func runBedrockAgent(
 	ctx context.Context,
 	client *bedrockruntime.Client,
 	modelID, system, userMsg string,
 	tools []bedrockTool,
 	handle toolHandler,
-	maxTokens, maxIterations int32,
+	maxTokens, maxIterations, maxSeconds int32,
 	temperature float32,
 ) (string, error) {
 	toolCfg := &types.ToolConfiguration{Tools: make([]types.Tool, 0, len(tools))}
@@ -75,17 +77,29 @@ func runBedrockAgent(
 
 	var finalText string
 	var inTok, outTok int32 // accumulated Bedrock token usage across iterations
+	var deadline time.Time
+	if maxSeconds > 0 {
+		deadline = time.Now().Add(time.Duration(maxSeconds) * time.Second)
+	}
+	timedOut := false
 	for i := int32(0); i < maxIterations; i++ {
-		out, err := client.Converse(ctx, &bedrockruntime.ConverseInput{
+		convInput := &bedrockruntime.ConverseInput{
 			ModelId:  aws.String(modelID),
 			System:   []types.SystemContentBlock{&types.SystemContentBlockMemberText{Value: system}},
 			Messages: messages,
-			ToolConfig: toolCfg,
 			InferenceConfig: &types.InferenceConfiguration{
 				MaxTokens:   aws.Int32(maxTokens),
 				Temperature: aws.Float32(temperature),
 			},
-		})
+		}
+		// Within the time budget the model may call tools; once exceeded, withhold
+		// them so it must summarize on this turn instead of investigating further.
+		if maxSeconds == 0 || time.Now().Before(deadline) {
+			convInput.ToolConfig = toolCfg
+		} else {
+			timedOut = true
+		}
+		out, err := client.Converse(ctx, convInput)
 		if err != nil {
 			return "", fmt.Errorf("bedrock converse: %w", err)
 		}
@@ -135,10 +149,13 @@ func runBedrockAgent(
 		}
 
 		if out.StopReason != types.StopReasonToolUse || len(toolResults) == 0 {
-			// Model is done (or asked for no tools) — finalText holds the answer.
+			// Model is done (or we withheld tools after the time budget).
 			logrus.WithFields(logrus.Fields{
-				"iterations": i + 1, "input_tokens": inTok, "output_tokens": outTok,
+				"iterations": i + 1, "input_tokens": inTok, "output_tokens": outTok, "timed_out": timedOut,
 			}).Info("diagnose: complete")
+			if timedOut {
+				return finalText + "\n\n(note: time budget reached; summary reflects findings so far)", nil
+			}
 			return finalText, nil
 		}
 

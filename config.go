@@ -64,6 +64,9 @@ func loadConfig(explicitPath string) error {
 	viper.SetDefault("bedrock.model_id", "")
 	viper.SetDefault("bedrock.max_tokens", 2048)
 	viper.SetDefault("bedrock.max_iterations", 8)
+	// Wall-clock budget for a diagnosis; once exceeded the agent stops calling
+	// tools and returns a summary so the MCP client doesn't time out. 0 disables.
+	viper.SetDefault("bedrock.max_seconds", 25)
 	viper.SetDefault("bedrock.temperature", 0.2)
 
 	// Optional separate ClickHouse connection used only by the server-side

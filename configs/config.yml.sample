@@ -39,12 +39,15 @@ http:
   addr: ":8080"           # Listen address
   auth_token: ""          # Bearer token clients must present (leave empty to disable auth)
 
-# Optional: deployment-specific guidance appended to the clickhouse_query tool
-# description visible to MCP clients. Useful for adding instance-size context,
-# common query patterns, or owning-team callouts without forking the binary.
-# Env var equivalent: HOUSEKEEPER_MCP_EXTRA_TOOL_DESCRIPTION
+# Optional: deployment-specific guidance for MCP clients.
+# - extra_tool_description: shared facts (topology, clusters, attribution columns,
+#   query patterns), appended to BOTH clickhouse_query and the diagnose agent.
+# - query_extra_description: appended ONLY to clickhouse_query, for restricted-route
+#   caveats (column REVOKEs etc.) that don't apply to the elevated diagnose connection.
+# Env vars: HOUSEKEEPER_MCP_EXTRA_TOOL_DESCRIPTION, HOUSEKEEPER_MCP_QUERY_EXTRA_DESCRIPTION
 mcp:
   extra_tool_description: ""
+  query_extra_description: ""
 
 # Optional: in-account Bedrock-backed diagnose tool. When both region and
 # model_id are set, the MCP exposes a server-side agent that investigates the

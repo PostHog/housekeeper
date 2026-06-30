@@ -74,6 +74,7 @@ func runBedrockAgent(
 	}}
 
 	var finalText string
+	var inTok, outTok int32 // accumulated Bedrock token usage across iterations
 	for i := int32(0); i < maxIterations; i++ {
 		out, err := client.Converse(ctx, &bedrockruntime.ConverseInput{
 			ModelId:  aws.String(modelID),
@@ -87,6 +88,10 @@ func runBedrockAgent(
 		})
 		if err != nil {
 			return "", fmt.Errorf("bedrock converse: %w", err)
+		}
+		if out.Usage != nil {
+			inTok += aws.ToInt32(out.Usage.InputTokens)
+			outTok += aws.ToInt32(out.Usage.OutputTokens)
 		}
 
 		msgOut, ok := out.Output.(*types.ConverseOutputMemberMessage)
@@ -131,6 +136,9 @@ func runBedrockAgent(
 
 		if out.StopReason != types.StopReasonToolUse || len(toolResults) == 0 {
 			// Model is done (or asked for no tools) — finalText holds the answer.
+			logrus.WithFields(logrus.Fields{
+				"iterations": i + 1, "input_tokens": inTok, "output_tokens": outTok,
+			}).Info("diagnose: complete")
 			return finalText, nil
 		}
 
@@ -141,6 +149,9 @@ func runBedrockAgent(
 		})
 	}
 
+	logrus.WithFields(logrus.Fields{
+		"iterations": maxIterations, "input_tokens": inTok, "output_tokens": outTok,
+	}).Info("diagnose: hit iteration budget")
 	if finalText != "" {
 		return finalText + "\n\n(note: investigation hit the iteration budget; answer may be partial)", nil
 	}

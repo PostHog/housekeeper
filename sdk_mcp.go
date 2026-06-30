@@ -46,12 +46,14 @@ Investigation tips:
 - Many apps tag queries with log_comment metadata, often surfaced as lc_* columns (e.g. lc_product, lc_workflow). These attribute a normalized_query_hash to the owning service/job/team in one query.
 - normalized_query_hash collapses identical queries with different literals. count() + sum(query_duration_ms) GROUP BY normalized_query_hash is the canonical "what's hammering us" query.`, dbList)
 
-	// Operators can append deployment-specific guidance (instance sizes, owning
-	// teams, common patterns) via mcp.extra_tool_description in config or the
-	// HOUSEKEEPER_MCP_EXTRA_TOOL_DESCRIPTION env var. This lets PostHog (or any
-	// org) ship private context without forking the public description.
+	// Shared deployment guidance (also given to the diagnose agent).
 	if extra := strings.TrimSpace(viper.GetString("mcp.extra_tool_description")); extra != "" {
 		toolDesc = toolDesc + "\n\nDeployment-specific guidance:\n" + extra
+	}
+	// clickhouse_query-only guidance (restricted-route caveats); not seen by the
+	// elevated diagnose agent.
+	if qextra := strings.TrimSpace(viper.GetString("mcp.query_extra_description")); qextra != "" {
+		toolDesc = toolDesc + "\n\n" + qextra
 	}
 
 	// Register ClickHouse tool with inferred input schema (from queryArgs)

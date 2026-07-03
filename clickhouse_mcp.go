@@ -241,8 +241,12 @@ func validateFreeformSQL(sql string) error {
 	if strings.Contains(s, ";") {
 		return fmt.Errorf("multiple statements are not allowed")
 	}
-	// Strip simple quoted strings to avoid false positives when scanning tokens
-	sanitized := stripQuotedLiterals(s)
+	// Strip simple quoted strings to avoid false positives when scanning tokens,
+	// then fold newlines/tabs to spaces so the space-padded keyword scans below
+	// treat multiline queries the same as single-line ones. Without this, a query
+	// starting "SELECT\n..." is rejected as non-SELECT, and a table reference
+	// after "\nFROM" escapes allowlist validation entirely.
+	sanitized := normalizeWhitespace(stripQuotedLiterals(s))
 	lower := strings.ToLower(strings.TrimSpace(sanitized))
 	if !strings.HasPrefix(lower, "select ") && !strings.HasPrefix(lower, "with ") {
 		return fmt.Errorf("only SELECT/WITH queries are allowed")
@@ -473,12 +477,34 @@ func isIdentChar(b byte) bool {
 	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_'
 }
 
+// normalizeWhitespace folds tabs, newlines, and carriage returns to single
+// spaces. Only used on the sanitized scan copy — the original SQL is what gets
+// sent to ClickHouse.
+func normalizeWhitespace(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch r {
+		case '\t', '\n', '\r':
+			return ' '
+		}
+		return r
+	}, s)
+}
+
 func stripQuotedLiterals(s string) string {
 	var b strings.Builder
 	inSingle, inDouble := false, false
 	for i := 0; i < len(s); i++ {
 		ch := s[i]
 		if inSingle {
+			// ClickHouse escapes quotes inside string literals with a backslash
+			// ('it\'s'); consume the escaped character so it can't terminate the
+			// literal and desync the scan.
+			if ch == '\\' && i+1 < len(s) {
+				i++
+				b.WriteByte(' ')
+				b.WriteByte(' ')
+				continue
+			}
 			if ch == '\'' {
 				inSingle = false
 			}
@@ -486,6 +512,12 @@ func stripQuotedLiterals(s string) string {
 			continue
 		}
 		if inDouble {
+			if ch == '\\' && i+1 < len(s) {
+				i++
+				b.WriteByte(' ')
+				b.WriteByte(' ')
+				continue
+			}
 			if ch == '"' {
 				inDouble = false
 			}

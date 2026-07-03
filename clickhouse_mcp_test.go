@@ -279,6 +279,32 @@ func TestValidateFreeformSQL(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name:    "multiline SELECT with newline after keyword",
+			sql:     "SELECT\n    count()\nFROM system.query_log\nWHERE query_duration_ms > 1000",
+			wantErr: false,
+		},
+		{
+			name:    "multiline WITH with newline after keyword",
+			sql:     "WITH\n    slow AS (SELECT query_id FROM system.query_log)\nSELECT count() FROM slow",
+			wantErr: false,
+		},
+		{
+			name:    "multiline FROM does not bypass table allowlist",
+			sql:     "SELECT 1\nFROM users.data",
+			wantErr: true,
+			errMsg:  "only tables from allowed databases",
+		},
+		{
+			name:    "dollar-sign property literals are allowed",
+			sql:     "SELECT count() FROM system.query_log WHERE query LIKE '%$geoip_city_name%'",
+			wantErr: false,
+		},
+		{
+			name:    "backslash-escaped quote does not desync literal stripping",
+			sql:     `SELECT count() FROM system.query_log WHERE query = 'it\'s from users.data'`,
+			wantErr: false,
+		},
+		{
 			name:    "CTE referenced by name in FROM",
 			sql:     "WITH slow AS (SELECT query_duration_ms FROM system.query_log WHERE query_duration_ms > 1000) SELECT count() FROM slow",
 			wantErr: false,

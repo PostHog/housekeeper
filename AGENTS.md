@@ -5,7 +5,7 @@
 - MCP server: `sdk_mcp.go` (server, transport, middleware), `clickhouse_mcp.go` (validation + query execution), `prometheus_mcp.go` (PromQL tools), `diagnose_mcp.go` + `bedrock.go` (optional in-account diagnose agent).
 - Legacy analysis mode: `agent.go` (Gemini), `clickhouse.go` (error queries), `slack.go` (webhook).
 - Configs in `configs/` (`config.yml.sample` template; user `config.yml` gitignored).
-- Local infra: `docker-compose.yml` (ClickHouse). PostHog's Kubernetes deployment config lives in private internal repos.
+- Local infra: `docker-compose.yml` (ClickHouse).
 
 ## Build, Test, and Development Commands
 - Build: `go build -o housekeeper`.

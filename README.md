@@ -83,7 +83,7 @@ Example requests:
 Same PromQL interface as `prometheus_query`, but targets a separate endpoint dedicated to ClickHouse-internal metrics (`ClickHouseMetrics_*`, `ClickHouseProfileEvents_*`, `ClickHouseAsyncMetrics_*`). Only registered when `prometheus_clickhouse.host` is set in config (see [Configuration](#️-configuration)). Use `prometheus_query` for general fleet/host metrics and `prometheus_query_clickhouse` for ClickHouse server internals.
 
 ### `clickhouse_diagnose` (optional)
-Ask a natural-language question ("why is X slow", "what's driving load") and a server-side Bedrock agent investigates via a guarded `run_sql` tool on a separate, elevated ClickHouse connection, returning only an attributed summary. Registered when `bedrock.region` + `bedrock.model_id` are set; credentials come from the default AWS chain (in-cluster: IRSA). Bounded by `bedrock.max_iterations` / `bedrock.max_seconds` — make sure your MCP client's tool timeout exceeds the latter. See [MCP.md](./MCP.md) for details.
+Ask a natural-language question ("why is X slow", "what's driving load") and a server-side Bedrock agent investigates via a guarded `run_sql` tool on a separate, elevated ClickHouse connection, returning only an attributed summary. Registered when `bedrock.region` + `bedrock.model_id` are set; credentials come from the default AWS chain. Bounded by `bedrock.max_iterations` / `bedrock.max_seconds` — make sure your MCP client's tool timeout exceeds the latter. See [MCP.md](./MCP.md) for details.
 
 ---
 
@@ -240,8 +240,6 @@ clickhouse:
 └── configs/
     └── config.yml.sample    # Configuration template
 ```
-
-PostHog's Kubernetes deployment config (Helm chart, ArgoCD, IRSA) lives in private internal repos; the server itself is fully configurable via flags or a config file as shown above.
 
 ## 🤝 Contributing
 

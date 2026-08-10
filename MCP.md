@@ -131,7 +131,7 @@ The server uses the official go-sdk and serves MCP over HTTP using the streamabl
 ### Tool: clickhouse_diagnose (optional)
 
 - Name: `clickhouse_diagnose`
-- Description: Ask a natural-language question about ClickHouse health; a server-side Bedrock agent (Anthropic model via the pod's IRSA role) investigates with a guarded `run_sql` tool on the elevated `analyst_clickhouse.*` connection and returns only a text summary — raw query text never leaves the account.
+- Description: Ask a natural-language question about ClickHouse health; a server-side Bedrock agent (credentials from the default AWS chain) investigates with a guarded `run_sql` tool on the elevated `analyst_clickhouse.*` connection and returns only a text summary — raw query text never leaves the account.
 - Registration: only exposed when both `bedrock.region` and `bedrock.model_id` are set.
 - Arguments: `question` (required), `cluster` (optional focus hint).
 - Budgets: `bedrock.max_iterations` run_sql round-trips and `bedrock.max_seconds` wall-clock; on exceeding the time budget the agent stops investigating and summarizes findings so far. The MCP client's tool timeout must exceed `bedrock.max_seconds` (e.g. `MCP_TOOL_TIMEOUT` in Claude Code) or the client gives up while the server keeps working.

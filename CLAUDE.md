@@ -15,7 +15,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Analysis Mode (legacy, optional)
 
-With `--analyze`, runs a one-shot Gemini-based error analysis (`agent.go`, `slack.go`, `clickhouse.go`) and posts to Slack. Not used by the Kubernetes deployments.
+With `--analyze`, runs a one-shot Gemini-based error analysis (`agent.go`, `slack.go`, `clickhouse.go`) and posts to Slack. Legacy; not used in MCP server deployments.
 
 ## Development Commands
 
@@ -37,7 +37,7 @@ docker-compose up -d              # local ClickHouse
 3. **clickhouse_mcp.go** — query args validation, free-form SQL validator, query building/execution, value normalization
 4. **prometheus_mcp.go** — Prometheus/VM clients (default + optional clickhouse endpoint), time-range validation
 5. **diagnose_mcp.go** — clickhouse_diagnose tool, analyst connection, diagnose system prompt
-6. **bedrock.go** — Bedrock client (IRSA/default AWS credential chain), Converse tool-use loop with iteration + wall-clock budgets
+6. **bedrock.go** — Bedrock client (default AWS credential chain), Converse tool-use loop with iteration + wall-clock budgets
 7. **config.go** — Viper config: defaults, `HOUSEKEEPER_*` env vars (dots → underscores), config file search paths
 8. **clickhouse.go / agent.go / slack.go** — legacy `--analyze` mode (Gemini + Slack)
 
@@ -52,7 +52,7 @@ Priority: CLI flags > env vars > config file > defaults. Notable keys beyond con
 
 ### Deployment
 
-PostHog's Kubernetes deployment (Helm chart, ArgoCD, per-environment tool descriptions, Bedrock IRSA) lives in private internal repos. The server itself is deployment-agnostic: everything operator-facing is set via flags, config file, or `HOUSEKEEPER_*` env vars.
+The server is deployment-agnostic: everything operator-facing is set via flags, config file, or `HOUSEKEEPER_*` env vars.
 
 ## Important Notes
 

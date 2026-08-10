@@ -4,89 +4,60 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Housekeeper is an MCP-first application** that runs as a Model Context Protocol server by default, providing AI assistants with direct access to ClickHouse system tables and Prometheus metrics.
+**Housekeeper is an MCP-first application**: by default it runs an HTTP MCP server (streamable HTTP transport) that gives AI assistants read-only access to ClickHouse and Prometheus/Victoria Metrics, plus an optional in-account LLM diagnosis tool.
 
-### Primary Mode: MCP Server (Default)
-When run without flags, Housekeeper starts an MCP server that exposes:
-- **clickhouse_query**: Read-only access to ClickHouse system tables
-- **prometheus_query**: Execute PromQL queries against Prometheus/Victoria Metrics
+### MCP tools exposed
 
-### Analysis Mode (Optional)
-With the `--analyze` flag, it monitors and analyzes ClickHouse database errors using Google's Gemini AI, generating summaries suitable for Slack notifications.
+- **clickhouse_query** — read-only queries (structured fields or free-form single SELECT/WITH), restricted to `clickhouse.allowed_databases`. Free-form SQL goes through the validator in `clickhouse_mcp.go` (allowlist of table refs, forbidden keywords, quote/whitespace normalization).
+- **prometheus_query** — PromQL range queries against the main Prometheus/VM endpoint.
+- **prometheus_query_clickhouse** — same interface against a dedicated ClickHouse-internals metrics endpoint; only registered when `prometheus_clickhouse.host` is set.
+- **clickhouse_diagnose** — only registered when `bedrock.region` + `bedrock.model_id` are set. Runs a server-side Bedrock Converse tool-use loop (`bedrock.go`) with a single `run_sql` tool against the elevated `analyst_clickhouse.*` connection, bounded by `bedrock.max_iterations` and `bedrock.max_seconds`, and returns only a text summary. The system prompt lives in `diagnose_mcp.go`; deployment-specific context is appended from `mcp.extra_tool_description`.
+
+### Analysis Mode (legacy, optional)
+
+With `--analyze`, runs a one-shot Gemini-based error analysis (`agent.go`, `slack.go`, `clickhouse.go`) and posts to Slack. Legacy; not used in MCP server deployments.
 
 ## Development Commands
 
-### Running the Application
 ```bash
-# Run as MCP server (default)
-go run .
-
-# Run in analysis mode (Gemini AI error analysis)
-go run . --analyze
-
-# Run performance analysis
-go run . --analyze --performance
-
-# Build the application
-go build -o housekeeper
-
-# Run with custom config
+go run .                          # MCP server (default)
 go run . --config configs/config.yml
-```
-
-### Development Environment
-```bash
-# Start local ClickHouse instance
-docker-compose up -d
-
-# Stop ClickHouse
-docker-compose down
-
-# View ClickHouse logs
-docker-compose logs clickhouse
-```
-
-### Dependency Management
-```bash
-# Download dependencies
-go mod download
-
-# Update dependencies
-go mod tidy
-
-# Verify dependencies
-go mod verify
+go build -o housekeeper
+go test ./...                     # tests exist: validator, query building, prometheus parsing
+gofmt -s -w . && go vet ./...
+docker-compose up -d              # local ClickHouse
 ```
 
 ## Architecture
 
-### Core Components
-1. **main.go** - Application entry point, defaults to MCP server mode
-2. **mcp_server.go** - MCP server implementation with clickhouse_query and prometheus_query tools
-3. **config.go** - Manages configuration via command-line flags or YAML config
-4. **clickhouse.go** - Handles ClickHouse connections and queries across cluster replicas
-5. **prometheus.go** - Prometheus/Victoria Metrics client for metrics queries
-6. **gemini.go** - Integrates with Google Gemini AI for error analysis (analysis mode only)
+### Core files
 
-### Configuration Structure
-The application expects a `configs/config.yml` file (copy from `configs/config.yml.sample`):
-- `gemini_api_key`: Google Gemini API key
-- `clickhouse`: Connection parameters including host, port, user, password, database, and cluster name
+1. **main.go** — entry point, pflag definitions, mode selection
+2. **sdk_mcp.go** — MCP server (go-sdk), tool registration, tool descriptions, HTTP transport + auth/CORS/logging middleware, row summarization
+3. **clickhouse_mcp.go** — query args validation, free-form SQL validator, query building/execution, value normalization
+4. **prometheus_mcp.go** — Prometheus/VM clients (default + optional clickhouse endpoint), time-range validation
+5. **diagnose_mcp.go** — clickhouse_diagnose tool, analyst connection, diagnose system prompt
+6. **bedrock.go** — Bedrock client (default AWS credential chain), Converse tool-use loop with iteration + wall-clock budgets
+7. **config.go** — Viper config: defaults, `HOUSEKEEPER_*` env vars (dots → underscores), config file search paths
+8. **clickhouse.go / agent.go / slack.go** — legacy `--analyze` mode (Gemini + Slack)
 
-### Key Design Patterns
-- **MCP-first architecture**: Runs as MCP server by default for AI assistant integration
-- **Cluster-aware querying**: Queries all replicas using `clusterAllReplicas()` function
-- **Read-only enforcement**: MCP mode restricts queries to system tables only
-- **Flexible configuration**: Supports both command-line flags and YAML config
-- **Time-based filtering**: Analysis mode focuses on errors from the last hour
-- **AI prompt engineering**: Uses specific prompts for Slack-friendly summaries
+### Configuration
+
+Priority: CLI flags > env vars > config file > defaults. Notable keys beyond connection params:
+
+- `mcp.extra_tool_description` — deployment-specific guidance appended to BOTH the clickhouse_query description and the diagnose agent's system prompt
+- `mcp.query_extra_description` — appended ONLY to clickhouse_query (restricted-role caveats the elevated diagnose agent must not see)
+- `bedrock.*` — enables clickhouse_diagnose (region + model_id), budgets, temperature
+- `analyst_clickhouse.*` — elevated connection for the diagnose agent; falls back to `clickhouse.*` when unset
+
+### Deployment
+
+The server is deployment-agnostic: everything operator-facing is set via flags, config file, or `HOUSEKEEPER_*` env vars.
 
 ## Important Notes
 
-1. **MCP is default mode** - Application runs as MCP server unless `--analyze` flag is used
-2. **No tests exist** - When adding features, consider creating a test suite
-3. **Configuration security** - Ensure `configs/config.yml` remains in .gitignore
-4. **ClickHouse connection** - Uses native protocol on port 9000 by default
-5. **MCP restrictions** - Server enforces read-only access to `system.*` tables only
-6. **Error handling** - The application uses `log.Fatal()` for errors, which exits the program
-7. **Local development** - Docker Compose provides a local ClickHouse instance with default credentials
+1. **MCP is the default mode** — `--analyze` is legacy and unused in k8s.
+2. **Security boundary is server-side** — the SQL validator is defense-in-depth; the ClickHouse role/profile (grants, column REVOKEs) is the real boundary. Keep both in mind when changing the validator.
+3. **Tool descriptions are product surface** — most operator-facing behavior is prompt text supplied via the `mcp.extra_tool_description` / `mcp.query_extra_description` config keys, not Go code. Check deployment config first for instruction changes.
+4. **Config security** — `configs/config*.yml` are gitignored; only `*.sample`/`*.example` are tracked.
+5. **Tests** — table-driven tests in `clickhouse_mcp_test.go`, `clickhouse_test.go`, `prometheus_mcp_test.go`. Extend them when touching the validator; bypasses have happened (multiline whitespace).

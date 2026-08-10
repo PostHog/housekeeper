@@ -9,6 +9,7 @@ Housekeeper runs as an HTTP MCP server, providing AI assistants like Claude with
 - **ClickHouse Queries**: Read-only access to configurable databases (defaults to `system.*` tables)
 - **Prometheus/Victoria Metrics**: Execute PromQL queries for metrics correlation and analysis
 - **ClickHouse-internal metrics (optional)**: Configure a second Prometheus/Victoria Metrics endpoint to expose a dedicated `prometheus_query_clickhouse` tool
+- **In-account diagnosis (optional)**: A Bedrock-backed `clickhouse_diagnose` tool that investigates server-side on an elevated connection and returns only a summary
 - **Smart Cluster Querying**: Automatic use of `clusterAllReplicas()` for system tables only (non-system tables are queried directly)
 
 ---
@@ -80,6 +81,9 @@ Example requests:
 
 ### `prometheus_query_clickhouse` (optional)
 Same PromQL interface as `prometheus_query`, but targets a separate endpoint dedicated to ClickHouse-internal metrics (`ClickHouseMetrics_*`, `ClickHouseProfileEvents_*`, `ClickHouseAsyncMetrics_*`). Only registered when `prometheus_clickhouse.host` is set in config (see [Configuration](#️-configuration)). Use `prometheus_query` for general fleet/host metrics and `prometheus_query_clickhouse` for ClickHouse server internals.
+
+### `clickhouse_diagnose` (optional)
+Ask a natural-language question ("why is X slow", "what's driving load") and a server-side Bedrock agent investigates via a guarded `run_sql` tool on a separate, elevated ClickHouse connection, returning only an attributed summary. Registered when `bedrock.region` + `bedrock.model_id` are set; credentials come from the default AWS chain. Bounded by `bedrock.max_iterations` / `bedrock.max_seconds` — make sure your MCP client's tool timeout exceeds the latter. See [MCP.md](./MCP.md) for details.
 
 ---
 
@@ -221,16 +225,18 @@ clickhouse:
 ```
 .
 ├── main.go                  # Entry point, flag definitions
-├── sdk_mcp.go               # HTTP MCP server, middlewares
+├── sdk_mcp.go               # HTTP MCP server, tool registration, middlewares
 ├── clickhouse_mcp.go        # ClickHouse query validation and execution
 ├── prometheus_mcp.go        # Prometheus/Victoria Metrics client
+├── diagnose_mcp.go          # clickhouse_diagnose tool + analyst connection
+├── bedrock.go               # Bedrock Converse tool-use loop (IRSA credentials)
 ├── clickhouse.go            # ClickHouse connection (analysis mode)
 ├── agent.go                 # Gemini AI integration (analysis mode)
 ├── slack.go                 # Slack notifications (analysis mode)
 ├── config.go                # Config loading and logging setup
+├── *_test.go                # Table-driven tests (SQL validator, query building, prometheus)
 ├── Dockerfile               # Multi-stage build → distroless runtime
 ├── docker-compose.yml       # Local ClickHouse for development
-├── chart/                   # Helm chart for Kubernetes
 └── configs/
     └── config.yml.sample    # Configuration template
 ```

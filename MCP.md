@@ -4,6 +4,7 @@
 1. Read‑only queries against configurable ClickHouse databases
 2. Querying Prometheus metrics for monitoring and correlation
 3. (Optional) Querying a separate Prometheus endpoint for ClickHouse-internal metrics
+4. (Optional) An in-account, Bedrock-backed diagnosis agent (`clickhouse_diagnose`)
 
 > **Looking for investigation guidance?** See [INVESTIGATION_PLAYBOOK.md](./INVESTIGATION_PLAYBOOK.md) for a methodology and `system.*` query patterns for diagnosing ClickHouse + ZooKeeper issues using these tools.
 
@@ -106,10 +107,9 @@ The server uses the official go-sdk and serves MCP over HTTP using the streamabl
 - Allowed databases: Configured via `--ch-allowed-databases` flag or `clickhouse.allowed_databases` in config (defaults to ["system"])
 
 **IMPORTANT Usage Guidelines:**
-- **For system.* tables**: The tool automatically uses `clusterAllReplicas()` to get cluster-wide data
-- **For non-system databases**: Do NOT use `clusterAllReplicas()` in your SQL queries. Query these tables directly.
-- Example for system tables: Tool converts `system.query_log` → `clusterAllReplicas(cluster, system.query_log)`
-- Example for other tables: Query `models.predictions` directly without cluster functions
+- **Structured mode auto-wraps `system.*`**: the tool converts `system.query_log` → `clusterAllReplicas(cluster, system.query_log)` for cluster-wide data. Non-system tables are queried directly. Note: on deployments with column REVOKEs on query-log tables, this forced wrap fails (a distributed read demands the whole-table grant) — use free-form `sql` with a plain single-node read for those tables.
+- **Free-form mode wraps nothing** — choose per table: replicated tables (same data everywhere) → query directly to avoid duplicate rows; sharded tables and per-node `system.*` → wrap in `clusterAllReplicas('<cluster>', db.table)` to see everything. Check `system.tables.engine` if unsure.
+- Only `db.table` and `clusterAllReplicas('cluster', db.table)` references are accepted; `cluster()` and `remote()` are blocked.
 
 ### Tool: prometheus_query
 
@@ -127,6 +127,14 @@ The server uses the official go-sdk and serves MCP over HTTP using the streamabl
 - Description: Same PromQL interface as `prometheus_query`, but targets a separate endpoint dedicated to ClickHouse-internal metrics (`ClickHouseMetrics_*`, `ClickHouseProfileEvents_*`, `ClickHouseAsyncMetrics_*`).
 - Registration: only exposed when `prometheus_clickhouse.host` is set in config.
 - Arguments: identical to `prometheus_query`.
+
+### Tool: clickhouse_diagnose (optional)
+
+- Name: `clickhouse_diagnose`
+- Description: Ask a natural-language question about ClickHouse health; a server-side Bedrock agent (credentials from the default AWS chain) investigates with a guarded `run_sql` tool on the elevated `analyst_clickhouse.*` connection and returns only a text summary — raw query text never leaves the account.
+- Registration: only exposed when both `bedrock.region` and `bedrock.model_id` are set.
+- Arguments: `question` (required), `cluster` (optional focus hint).
+- Budgets: `bedrock.max_iterations` run_sql round-trips and `bedrock.max_seconds` wall-clock; on exceeding the time budget the agent stops investigating and summarizes findings so far. The MCP client's tool timeout must exceed `bedrock.max_seconds` (e.g. `MCP_TOOL_TIMEOUT` in Claude Code) or the client gives up while the server keeps working.
 
 ## Example tools/call
 

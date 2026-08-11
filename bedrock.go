@@ -116,7 +116,20 @@ func runBedrockAgent(
 		}
 		assistant := msgOut.Value
 		// Echo the assistant turn back into the history so tool results line up.
-		messages = append(messages, assistant)
+		// Strip content blocks this SDK build can't re-serialize (decoded as
+		// UnknownUnionMember, e.g. new block types from newer models): echoing
+		// one back fails the next Converse call outright. Dropping it degrades
+		// gracefully; the durable fix is keeping the bedrockruntime SDK current.
+		echo := assistant
+		echo.Content = make([]types.ContentBlock, 0, len(assistant.Content))
+		for _, block := range assistant.Content {
+			if _, unknown := block.(*types.UnknownUnionMember); unknown {
+				logrus.Warn("diagnose: dropping unrecognized assistant content block (bedrockruntime SDK likely older than the model)")
+				continue
+			}
+			echo.Content = append(echo.Content, block)
+		}
+		messages = append(messages, echo)
 
 		// Collect any text and any tool-use requests from this turn.
 		var toolResults []types.ContentBlock

@@ -19,11 +19,44 @@ import (
 type diagnoseArgs struct {
 	Question string `json:"question"`
 	Cluster  string `json:"cluster,omitempty"`
+	// BudgetSeconds is the caller's wall-clock budget for this investigation.
+	// 0 = the deployment default (bedrock.default_seconds). Clamped to the
+	// deployment cap (bedrock.max_seconds). Callers should only raise this
+	// past ~50s when their MCP client tool timeout exceeds the budget.
+	BudgetSeconds int `json:"budget_seconds,omitempty"`
 }
 
 // maxToolResultChars caps how much row data a single run_sql result feeds back
 // to the model, bounding context size and tool-result payloads.
 const maxToolResultChars = 12000
+
+// capBudgetSeconds is the deployment ceiling for a single diagnosis
+// (bedrock.max_seconds). 0 disables the wall-clock budget entirely.
+func capBudgetSeconds() int {
+	return viper.GetInt("bedrock.max_seconds")
+}
+
+// defaultBudgetSeconds is the budget used when the caller doesn't pass
+// budget_seconds. Clamped to the cap.
+func defaultBudgetSeconds() int {
+	d := viper.GetInt("bedrock.default_seconds")
+	if c := capBudgetSeconds(); c > 0 && (d <= 0 || d > c) {
+		return c
+	}
+	return d
+}
+
+// resolveBudgetSeconds picks the effective wall-clock budget for one call:
+// the caller's budget_seconds when set (clamped to the cap), else the default.
+func resolveBudgetSeconds(requested int) int {
+	if requested <= 0 {
+		return defaultBudgetSeconds()
+	}
+	if c := capBudgetSeconds(); c > 0 && requested > c {
+		return c
+	}
+	return requested
+}
 
 // connectAnalyst opens the ClickHouse connection used by the diagnose agent. It
 // uses analyst_clickhouse.* config, falling back to the clickhouse.* connection
@@ -162,7 +195,10 @@ func registerDiagnoseTool(srv *mcp.Server) {
 		system += "\n\nDeployment-specific context:\n" + extra
 	}
 
-	desc := `Ask a natural-language question about ClickHouse health and get an investigated, attributed diagnosis. Runs an in-account LLM agent that investigates server-side and returns only a summary. Use for "why is X slow / lagging / erroring", "what's driving load on <cluster>", "who owns this query pattern". For raw row access use clickhouse_query instead.`
+	desc := `Ask a natural-language question about ClickHouse health and get an investigated, attributed diagnosis. Runs an in-account LLM agent that investigates server-side and returns only a summary. Use for "why is X slow / lagging / erroring", "what's driving load on <cluster>", "who owns this query pattern". For raw row access use clickhouse_query instead.
+
+budget_seconds: wall-clock budget for the investigation (default %d, cap %d). The default fits clients with a fixed ~60s tool timeout; pass a higher value up to the cap ONLY if your client's tool timeout exceeds it (e.g. MCP_TOOL_TIMEOUT in Claude Code) — otherwise the client gives up while the server keeps investigating. When the budget runs out the agent stops querying and summarizes findings so far; scope the question tightly for faster, deeper answers.`
+	desc = fmt.Sprintf(desc, defaultBudgetSeconds(), capBudgetSeconds())
 
 	mcp.AddTool[diagnoseArgs, map[string]any](
 		srv,
@@ -232,6 +268,11 @@ func registerDiagnoseTool(srv *mcp.Server) {
 				userMsg = fmt.Sprintf("%s\n\n(focus cluster: %s)", q, c)
 			}
 
+			budget := resolveBudgetSeconds(req.Arguments.BudgetSeconds)
+			logrus.WithFields(logrus.Fields{
+				"budget_seconds": budget, "requested": req.Arguments.BudgetSeconds,
+			}).Debug("diagnose: budget resolved")
+
 			answer, err := runBedrockAgent(
 				ctx, client,
 				viper.GetString("bedrock.model_id"),
@@ -239,7 +280,7 @@ func registerDiagnoseTool(srv *mcp.Server) {
 				[]bedrockTool{runSQL}, handle,
 				int32(viper.GetInt("bedrock.max_tokens")),
 				int32(viper.GetInt("bedrock.max_iterations")),
-				int32(viper.GetInt("bedrock.max_seconds")),
+				int32(budget),
 				float32(viper.GetFloat64("bedrock.temperature")),
 			)
 			if err != nil {

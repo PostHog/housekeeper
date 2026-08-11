@@ -25,35 +25,28 @@ func RunMCPServer() error {
 		return fmt.Errorf("failed to initialize prometheus client: %v", err)
 	}
 
-	// Build description with allowed databases
+	// Build description with allowed databases. Kept deliberately compact:
+	// several MCP clients truncate tool descriptions around ~2k chars, so base
+	// mechanics come first, then role caveats (query_extra_description), then
+	// deployment guidance (extra_tool_description) in decreasing order of
+	// importance to a client-side agent.
 	allowedDbs := getAllowedDatabases()
 	dbList := strings.Join(allowedDbs, ", ")
 	toolDesc := fmt.Sprintf(`Read-only queries against ClickHouse databases (%s).
 
-Query patterns:
-- system.* tables are per-node — wrap in clusterAllReplicas('<cluster>', system.<table>) for cluster-wide visibility.
-- For user-database tables: replicated tables (same data on every replica) should be queried directly to avoid duplicates; sharded tables (different data per shard) need clusterAllReplicas to see everything. Check system.tables.engine if unsure, or test counts both ways.
-- Prefer structured fields (table, columns, where, order_by, limit); use sql for joins/aggregations/CTEs.
+Modes: structured (table, columns, where, order_by, limit; system.* is auto-wrapped in clusterAllReplicas for cluster-wide reads) or free-form sql (single SELECT/WITH; use for joins, aggregations, CTEs).
+Validator: only db.table and clusterAllReplicas('cluster', db.table) table refs are accepted; cluster(), remote(), writes and DDL are blocked. Columns may be REVOKED per deployment — attribute queries via normalized_query_hash + log_comment/lc_* metadata rather than raw text.
+system.* tables are per-node (wrap them yourself in sql mode); replicated tables: read directly; sharded tables: clusterAllReplicas. Cluster names: system.clusters. Query-log/history reads: ALWAYS include an event_date filter (partition pruning) alongside event_time.`, dbList)
 
-Validator limitations:
-- Only db.table and clusterAllReplicas('cluster', db.table) table references are accepted. cluster() and remote() are blocked.
-- Some columns may be REVOKED on the connected role (query text, secrets, etc.). Identify queries by normalized_query_hash + structural metadata columns instead.
-
-Cluster identifiers vary per deployment — check system.clusters.
-
-Investigation tips:
-- Calibrate memory_usage / read_bytes against the cluster's actual node size before flagging as concerning.
-- Many apps tag queries with log_comment metadata, often surfaced as lc_* columns (e.g. lc_product, lc_workflow). These attribute a normalized_query_hash to the owning service/job/team in one query.
-- normalized_query_hash collapses identical queries with different literals. count() + sum(query_duration_ms) GROUP BY normalized_query_hash is the canonical "what's hammering us" query.`, dbList)
-
+	// clickhouse_query-only guidance (restricted-route caveats); not seen by the
+	// elevated diagnose agent. Placed BEFORE the shared deployment guidance so
+	// truncating clients still see the caveats that change tool behavior.
+	if qextra := strings.TrimSpace(viper.GetString("mcp.query_extra_description")); qextra != "" {
+		toolDesc = toolDesc + "\n\n" + qextra
+	}
 	// Shared deployment guidance (also given to the diagnose agent).
 	if extra := strings.TrimSpace(viper.GetString("mcp.extra_tool_description")); extra != "" {
 		toolDesc = toolDesc + "\n\nDeployment-specific guidance:\n" + extra
-	}
-	// clickhouse_query-only guidance (restricted-route caveats); not seen by the
-	// elevated diagnose agent.
-	if qextra := strings.TrimSpace(viper.GetString("mcp.query_extra_description")); qextra != "" {
-		toolDesc = toolDesc + "\n\n" + qextra
 	}
 
 	// Register ClickHouse tool with inferred input schema (from queryArgs)

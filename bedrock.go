@@ -81,16 +81,20 @@ func runBedrockAgent(
 	if maxSeconds > 0 {
 		deadline = time.Now().Add(time.Duration(maxSeconds) * time.Second)
 	}
+	// temperature < 0 means "don't send" — newer Anthropic models (Sonnet 5+)
+	// reject the temperature parameter on Converse entirely, so it's opt-in for
+	// the older models that still accept it.
+	infCfg := &types.InferenceConfiguration{MaxTokens: aws.Int32(maxTokens)}
+	if temperature >= 0 {
+		infCfg.Temperature = aws.Float32(temperature)
+	}
 	timedOut := false
 	for i := int32(0); i < maxIterations; i++ {
 		convInput := &bedrockruntime.ConverseInput{
-			ModelId:  aws.String(modelID),
-			System:   []types.SystemContentBlock{&types.SystemContentBlockMemberText{Value: system}},
-			Messages: messages,
-			InferenceConfig: &types.InferenceConfiguration{
-				MaxTokens:   aws.Int32(maxTokens),
-				Temperature: aws.Float32(temperature),
-			},
+			ModelId:         aws.String(modelID),
+			System:          []types.SystemContentBlock{&types.SystemContentBlockMemberText{Value: system}},
+			Messages:        messages,
+			InferenceConfig: infCfg,
 		}
 		// ToolConfig must always be set — Bedrock rejects a request whose history
 		// contains tool blocks if it's omitted. When the wall-clock budget is

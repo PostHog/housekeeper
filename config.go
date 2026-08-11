@@ -13,7 +13,8 @@ import (
 // searches several conventional locations to work when launched by external hosts (e.g., MCP clients).
 // Priority (highest to lowest): CLI flags > env vars > config file > defaults.
 // Env vars use the prefix HOUSEKEEPER_ with dots replaced by underscores, e.g.:
-//   HOUSEKEEPER_CLICKHOUSE_HOST, HOUSEKEEPER_CLICKHOUSE_PASSWORD, HOUSEKEEPER_HTTP_AUTH_TOKEN
+//
+//	HOUSEKEEPER_CLICKHOUSE_HOST, HOUSEKEEPER_CLICKHOUSE_PASSWORD, HOUSEKEEPER_HTTP_AUTH_TOKEN
 func loadConfig(explicitPath string) error {
 	// Enable environment variable support
 	viper.SetEnvPrefix("HOUSEKEEPER")
@@ -28,7 +29,7 @@ func loadConfig(explicitPath string) error {
 	viper.SetDefault("clickhouse.password", "")
 	viper.SetDefault("clickhouse.database", "default")
 	viper.SetDefault("clickhouse.cluster", "default")
-	
+
 	viper.SetDefault("prometheus.host", "localhost")
 	viper.SetDefault("prometheus.port", 8481)
 	viper.SetDefault("prometheus.vm_cluster_mode", false)
@@ -41,7 +42,7 @@ func loadConfig(explicitPath string) error {
 	viper.SetDefault("prometheus_clickhouse.vm_cluster_mode", false)
 	viper.SetDefault("prometheus_clickhouse.vm_tenant_id", "0")
 	viper.SetDefault("prometheus_clickhouse.vm_path_prefix", "")
-	
+
 	viper.SetDefault("logging.level", "info")
 	viper.SetDefault("logging.format", "text")
 
@@ -67,7 +68,9 @@ func loadConfig(explicitPath string) error {
 	// Wall-clock budget for a diagnosis; once exceeded the agent stops calling
 	// tools and returns a summary so the MCP client doesn't time out. 0 disables.
 	viper.SetDefault("bedrock.max_seconds", 25)
-	viper.SetDefault("bedrock.temperature", 0.2)
+	// < 0 = don't send temperature. Newer Anthropic models (Sonnet 5+) reject
+	// the parameter on Converse; set >= 0 only for older models that accept it.
+	viper.SetDefault("bedrock.temperature", -1)
 
 	// Optional separate ClickHouse connection used only by the server-side
 	// diagnose agent. Empty fields fall back to the clickhouse.* connection.
@@ -134,7 +137,7 @@ func configureLogging() {
 	if level == "" {
 		level = "info"
 	}
-	
+
 	parsedLevel, err := logrus.ParseLevel(strings.ToLower(level))
 	if err != nil {
 		logrus.WithError(err).Warn("Invalid log level, defaulting to info")

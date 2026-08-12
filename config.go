@@ -69,9 +69,10 @@ func loadConfig(explicitPath string) error {
 	// tools and returns a summary so the MCP client doesn't time out. 0 disables.
 	viper.SetDefault("bedrock.max_seconds", 25)
 	// Default per-call budget when the caller doesn't pass budget_seconds.
-	// Sized to fit clients with fixed ~60s tool timeouts; callers with larger
-	// timeouts opt up per call, clamped to max_seconds.
-	viper.SetDefault("bedrock.default_seconds", 50)
+	// Sized so budget + the in-flight turn + one summarize turn fits a fixed
+	// ~60s client tool timeout at Sonnet-5-class per-turn latency; callers with
+	// larger timeouts opt up per call, clamped to max_seconds.
+	viper.SetDefault("bedrock.default_seconds", 35)
 	// < 0 = don't send temperature. Newer Anthropic models (Sonnet 5+) reject
 	// the parameter on Converse; set >= 0 only for older models that accept it.
 	viper.SetDefault("bedrock.temperature", -1)

@@ -98,9 +98,8 @@ func runBedrockAgent(
 		}
 		// ToolConfig must always be set — Bedrock rejects a request whose history
 		// contains tool blocks if it's omitted. When the wall-clock budget is
-		// exceeded we instead nudge the model (below) to stop and summarize.
+		// exceeded we instead refuse tool execution (below) so the model summarizes.
 		convInput.ToolConfig = toolCfg
-		overBudget := maxSeconds > 0 && !time.Now().Before(deadline)
 		out, err := client.Converse(ctx, convInput)
 		if err != nil {
 			return "", fmt.Errorf("bedrock converse: %w", err)
@@ -131,7 +130,13 @@ func runBedrockAgent(
 		}
 		messages = append(messages, echo)
 
-		// Collect any text and any tool-use requests from this turn.
+		// Collect any text and any tool-use requests from this turn. The budget is
+		// re-checked HERE, after the turn returns, so a deadline that expired while
+		// the model was generating (or while earlier tools ran) refuses the newly
+		// requested tools instead of executing them — the previous shape executed
+		// one more full round of tools and only nudged afterwards, overshooting the
+		// budget by up to two model turns plus their queries.
+		overBudget := maxSeconds > 0 && !time.Now().Before(deadline)
 		var toolResults []types.ContentBlock
 		for _, block := range assistant.Content {
 			switch b := block.(type) {
@@ -139,6 +144,18 @@ func runBedrockAgent(
 				finalText = b.Value
 			case *types.ContentBlockMemberToolUse:
 				tu := b.Value
+				trb := types.ToolResultBlock{ToolUseId: tu.ToolUseId}
+				if overBudget {
+					// Refuse execution: every pending call gets a budget error so
+					// the model's only productive next move is the final summary.
+					timedOut = true
+					trb.Status = types.ToolResultStatusError
+					trb.Content = []types.ToolResultContentBlock{
+						&types.ToolResultContentBlockMemberText{Value: "error: time budget exceeded — do not call any more tools; give your final summary of findings now."},
+					}
+					toolResults = append(toolResults, &types.ContentBlockMemberToolResult{Value: trb})
+					continue
+				}
 				name := aws.ToString(tu.Name)
 				var input map[string]any
 				if tu.Input != nil {
@@ -148,7 +165,6 @@ func runBedrockAgent(
 				}
 				logrus.WithFields(logrus.Fields{"tool": name, "iter": i}).Debug("diagnose: tool call")
 				result, herr := handle(name, input)
-				trb := types.ToolResultBlock{ToolUseId: tu.ToolUseId}
 				if herr != nil {
 					trb.Status = types.ToolResultStatusError
 					trb.Content = []types.ToolResultContentBlock{
@@ -174,11 +190,11 @@ func runBedrockAgent(
 			return finalText, nil
 		}
 
-		// Feed tool results back. If we're over the time budget, append a nudge so
-		// the model stops investigating and summarizes on its next turn (tools stay
-		// available — we can't withhold them once history has tool blocks).
+		// Feed tool results back. Over budget, the results themselves are budget
+		// errors (above); the extra text block reinforces the stop instruction
+		// (tools stay schema-available — Bedrock requires ToolConfig once history
+		// has tool blocks).
 		if overBudget {
-			timedOut = true
 			toolResults = append(toolResults, &types.ContentBlockMemberText{
 				Value: "Time budget reached — do not call any more tools; give your final summary of findings now.",
 			})

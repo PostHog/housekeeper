@@ -44,6 +44,11 @@ type bedrockTool struct {
 // not returned to the caller — only a fatal transport error aborts the loop.
 type toolHandler func(name string, input map[string]any) (string, error)
 
+// progressFunc reports investigation progress (iteration counter + message).
+// Nil disables reporting. Used to emit MCP progress notifications so
+// spec-compliant clients reset their tool timeout during long investigations.
+type progressFunc func(iteration int32, message string)
+
 // runBedrockAgent drives a Converse tool-use loop until the model produces a
 // final answer or a limit is hit (iteration count or wall-clock budget). When
 // the time budget is exceeded it makes one final tool-free turn so the model
@@ -56,6 +61,7 @@ func runBedrockAgent(
 	handle toolHandler,
 	maxTokens, maxIterations, maxSeconds int32,
 	temperature float32,
+	progress progressFunc,
 ) (string, error) {
 	toolCfg := &types.ToolConfiguration{Tools: make([]types.Tool, 0, len(tools))}
 	for _, t := range tools {
@@ -90,6 +96,11 @@ func runBedrockAgent(
 	}
 	timedOut := false
 	for i := int32(0); i < maxIterations; i++ {
+		// One tick per model turn (~15-40s apart) — frequent enough that a
+		// spec-compliant MCP client resets its tool timeout between turns.
+		if progress != nil {
+			progress(i+1, fmt.Sprintf("investigating: model turn %d/%d", i+1, maxIterations))
+		}
 		convInput := &bedrockruntime.ConverseInput{
 			ModelId:         aws.String(modelID),
 			System:          []types.SystemContentBlock{&types.SystemContentBlockMemberText{Value: system}},

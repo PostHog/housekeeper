@@ -187,17 +187,99 @@ Output rules:
 
 Deployment-specific details (databases, tables, clusters, node sizes) are appended below when configured.`
 
-// registerDiagnoseTool adds the in-MCP, Bedrock-backed diagnose tool. The model
-// queries ClickHouse via the analyst connection and the tool returns its summary.
-func registerDiagnoseTool(srv *mcp.Server) {
+// diagnoseSystem assembles the diagnose agent's system prompt (base + the
+// shared deployment guidance).
+func diagnoseSystem() string {
 	system := diagnoseSystemPrompt
 	if extra := strings.TrimSpace(viper.GetString("mcp.extra_tool_description")); extra != "" {
 		system += "\n\nDeployment-specific context:\n" + extra
 	}
+	return system
+}
+
+// runDiagnosis performs one complete investigation: it opens the Bedrock
+// client and analyst connection, exposes the guarded run_sql tool, and drives
+// the agent loop until an answer or the budget. Shared by the synchronous
+// clickhouse_diagnose tool and the async job runner — ctx governs the whole
+// investigation, so the caller decides whether it is bound to a request or to
+// a background job.
+func runDiagnosis(ctx context.Context, question, cluster string, budgetSeconds int, progress progressFunc) (string, error) {
+	client, err := newBedrockClient(ctx)
+	if err != nil {
+		return "", err
+	}
+	conn, err := connectAnalyst()
+	if err != nil {
+		return "", fmt.Errorf("analyst connection: %w", err)
+	}
+	defer func() {
+		if cerr := conn.Close(); cerr != nil {
+			logrus.WithError(cerr).Warn("diagnose: error closing analyst connection")
+		}
+	}()
+
+	// The single tool the model may call: a guarded read-only query.
+	runSQL := bedrockTool{
+		name:        "run_sql",
+		description: "Execute one read-only SELECT/WITH query against ClickHouse and return the rows. Single statement only.",
+		inputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"sql": map[string]any{
+					"type":        "string",
+					"description": "A single read-only SELECT or WITH query. Use clusterAllReplicas('<cluster>', system.<table>) for system tables.",
+				},
+			},
+			"required": []any{"sql"},
+		},
+	}
+
+	handle := func(name string, input map[string]any) (string, error) {
+		if name != "run_sql" {
+			return "", fmt.Errorf("unknown tool %q", name)
+		}
+		sql, _ := input["sql"].(string)
+		sql = strings.TrimSpace(sql)
+		if sql == "" {
+			return "", fmt.Errorf("sql is empty")
+		}
+		if err := validateFreeformSQL(sql); err != nil {
+			return "", err
+		}
+		rows, err := queryRows(ctx, conn, sql)
+		if err != nil {
+			return "", err
+		}
+		return formatRowsForModel(rows), nil
+	}
+
+	userMsg := question
+	if c := strings.TrimSpace(cluster); c != "" {
+		userMsg = fmt.Sprintf("%s\n\n(focus cluster: %s)", question, c)
+	}
+
+	return runBedrockAgent(
+		ctx, client,
+		viper.GetString("bedrock.model_id"),
+		diagnoseSystem(), userMsg,
+		[]bedrockTool{runSQL}, handle,
+		int32(viper.GetInt("bedrock.max_tokens")),
+		int32(viper.GetInt("bedrock.max_iterations")),
+		int32(budgetSeconds),
+		float32(viper.GetFloat64("bedrock.temperature")),
+		progress,
+	)
+}
+
+// registerDiagnoseTool adds the in-MCP, Bedrock-backed diagnose tool. The model
+// queries ClickHouse via the analyst connection and the tool returns its summary.
+func registerDiagnoseTool(srv *mcp.Server) {
 
 	desc := `Ask a natural-language question about ClickHouse health and get an investigated, attributed diagnosis. Runs an in-account LLM agent that investigates server-side and returns only a summary. Use for "why is X slow / lagging / erroring", "what's driving load on <cluster>", "who owns this query pattern". For raw row access use clickhouse_query instead.
 
-budget_seconds: wall-clock budget for the investigation (default %d, cap %d). The default fits clients with a fixed ~60s tool timeout; pass a higher value up to the cap ONLY if your client's tool timeout exceeds it (e.g. MCP_TOOL_TIMEOUT in Claude Code) — or if your client honors MCP progress notifications: the server emits one per model turn, and clients that reset their tool timeout on progress can run any budget up to the cap. When the budget runs out the agent stops querying and summarizes findings so far; scope the question tightly for faster, deeper answers.`
+budget_seconds: wall-clock budget for the investigation (default %d, cap %d). The default fits clients with a fixed ~60s tool timeout; pass a higher value up to the cap ONLY if your client's tool timeout exceeds it (e.g. MCP_TOOL_TIMEOUT in Claude Code) — or if your client honors MCP progress notifications: the server emits one per model turn, and clients that reset their tool timeout on progress can run any budget up to the cap. When the budget runs out the agent stops querying and summarizes findings so far; scope the question tightly for faster, deeper answers.
+
+For investigations longer than your client can wait, use clickhouse_diagnose_async + clickhouse_diagnose_result instead.`
 	desc = fmt.Sprintf(desc, defaultBudgetSeconds(), capBudgetSeconds())
 
 	mcp.AddTool[diagnoseArgs, map[string]any](
@@ -212,60 +294,6 @@ budget_seconds: wall-clock budget for the investigation (default %d, cap %d). Th
 			q := strings.TrimSpace(req.Arguments.Question)
 			if q == "" {
 				return nil, fmt.Errorf("question is required")
-			}
-
-			client, err := newBedrockClient(ctx)
-			if err != nil {
-				return nil, err
-			}
-			conn, err := connectAnalyst()
-			if err != nil {
-				return nil, fmt.Errorf("analyst connection: %w", err)
-			}
-			defer func() {
-				if cerr := conn.Close(); cerr != nil {
-					logrus.WithError(cerr).Warn("diagnose: error closing analyst connection")
-				}
-			}()
-
-			// The single tool the model may call: a guarded read-only query.
-			runSQL := bedrockTool{
-				name:        "run_sql",
-				description: "Execute one read-only SELECT/WITH query against ClickHouse and return the rows. Single statement only.",
-				inputSchema: map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"sql": map[string]any{
-							"type":        "string",
-							"description": "A single read-only SELECT or WITH query. Use clusterAllReplicas('<cluster>', system.<table>) for system tables.",
-						},
-					},
-					"required": []any{"sql"},
-				},
-			}
-
-			handle := func(name string, input map[string]any) (string, error) {
-				if name != "run_sql" {
-					return "", fmt.Errorf("unknown tool %q", name)
-				}
-				sql, _ := input["sql"].(string)
-				sql = strings.TrimSpace(sql)
-				if sql == "" {
-					return "", fmt.Errorf("sql is empty")
-				}
-				if err := validateFreeformSQL(sql); err != nil {
-					return "", err
-				}
-				rows, err := queryRows(ctx, conn, sql)
-				if err != nil {
-					return "", err
-				}
-				return formatRowsForModel(rows), nil
-			}
-
-			userMsg := q
-			if c := strings.TrimSpace(req.Arguments.Cluster); c != "" {
-				userMsg = fmt.Sprintf("%s\n\n(focus cluster: %s)", q, c)
 			}
 
 			budget := resolveBudgetSeconds(req.Arguments.BudgetSeconds)
@@ -290,17 +318,7 @@ budget_seconds: wall-clock budget for the investigation (default %d, cap %d). Th
 				}
 			}
 
-			answer, err := runBedrockAgent(
-				ctx, client,
-				viper.GetString("bedrock.model_id"),
-				system, userMsg,
-				[]bedrockTool{runSQL}, handle,
-				int32(viper.GetInt("bedrock.max_tokens")),
-				int32(viper.GetInt("bedrock.max_iterations")),
-				int32(budget),
-				float32(viper.GetFloat64("bedrock.temperature")),
-				progress,
-			)
+			answer, err := runDiagnosis(ctx, q, req.Arguments.Cluster, budget, progress)
 			if err != nil {
 				return nil, err
 			}

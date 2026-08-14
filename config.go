@@ -73,6 +73,11 @@ func loadConfig(explicitPath string) error {
 	// ~60s client tool timeout at Sonnet-5-class per-turn latency; callers with
 	// larger timeouts opt up per call, clamped to max_seconds.
 	viper.SetDefault("bedrock.default_seconds", 35)
+	// Async jobs (clickhouse_diagnose_async): default budget when the caller
+	// doesn't pass budget_seconds (clamped to max_seconds), and how many
+	// investigations may run concurrently.
+	viper.SetDefault("bedrock.async_default_seconds", 120)
+	viper.SetDefault("bedrock.max_concurrent_jobs", 3)
 	// < 0 = don't send temperature. Newer Anthropic models (Sonnet 5+) reject
 	// the parameter on Converse; set >= 0 only for older models that accept it.
 	viper.SetDefault("bedrock.temperature", -1)

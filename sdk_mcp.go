@@ -102,7 +102,8 @@ step: Go duration ("15s", "30s", "1m"). 15s exploits the upstream's native resol
 	// with the analyst connection and returns only a summary.
 	if bedrockEnabled() {
 		registerDiagnoseTool(srv)
-		logrus.Info("diagnose tool enabled (Bedrock in-account analysis)")
+		registerDiagnoseAsyncTools(srv)
+		logrus.Info("diagnose tools enabled (Bedrock in-account analysis, sync + async)")
 	}
 
 	return runHTTPMCPServer(srv)

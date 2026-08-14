@@ -61,6 +61,8 @@ bedrock:
   max_iterations: 8      # max run_sql round-trips per diagnosis
   max_seconds: 25        # wall-clock CAP per diagnosis; on exceed, summarize instead of timing out (0 = off)
   default_seconds: 35    # per-call budget when the caller omits budget_seconds (clamped to max_seconds)
+  async_default_seconds: 120  # default budget for clickhouse_diagnose_async jobs (clamped to max_seconds)
+  max_concurrent_jobs: 3      # concurrent async investigations allowed
   temperature: -1        # < 0 = don't send. Sonnet 5+ rejects the parameter; set >= 0 only for older models
 
 # Optional separate ClickHouse connection used only by the diagnose agent.

@@ -197,7 +197,7 @@ func registerDiagnoseTool(srv *mcp.Server) {
 
 	desc := `Ask a natural-language question about ClickHouse health and get an investigated, attributed diagnosis. Runs an in-account LLM agent that investigates server-side and returns only a summary. Use for "why is X slow / lagging / erroring", "what's driving load on <cluster>", "who owns this query pattern". For raw row access use clickhouse_query instead.
 
-budget_seconds: wall-clock budget for the investigation (default %d, cap %d). The default fits clients with a fixed ~60s tool timeout; pass a higher value up to the cap ONLY if your client's tool timeout exceeds it (e.g. MCP_TOOL_TIMEOUT in Claude Code) — otherwise the client gives up while the server keeps investigating. When the budget runs out the agent stops querying and summarizes findings so far; scope the question tightly for faster, deeper answers.`
+budget_seconds: wall-clock budget for the investigation (default %d, cap %d). The default fits clients with a fixed ~60s tool timeout; pass a higher value up to the cap ONLY if your client's tool timeout exceeds it (e.g. MCP_TOOL_TIMEOUT in Claude Code) — or if your client honors MCP progress notifications: the server emits one per model turn, and clients that reset their tool timeout on progress can run any budget up to the cap. When the budget runs out the agent stops querying and summarizes findings so far; scope the question tightly for faster, deeper answers.`
 	desc = fmt.Sprintf(desc, defaultBudgetSeconds(), capBudgetSeconds())
 
 	mcp.AddTool[diagnoseArgs, map[string]any](
@@ -273,6 +273,23 @@ budget_seconds: wall-clock budget for the investigation (default %d, cap %d). Th
 				"budget_seconds": budget, "requested": req.Arguments.BudgetSeconds,
 			}).Debug("diagnose: budget resolved")
 
+			// Emit MCP progress notifications (one per model turn) when the
+			// client supplied a progress token. Spec-compliant clients reset
+			// their tool timeout on each notification, which lets budgets
+			// beyond the client's fixed timeout actually complete.
+			var progress progressFunc
+			if token := req.GetProgressToken(); token != nil {
+				progress = func(iter int32, msg string) {
+					if perr := ss.NotifyProgress(ctx, &mcp.ProgressNotificationParams{
+						ProgressToken: token,
+						Progress:      float64(iter),
+						Message:       msg,
+					}); perr != nil {
+						logrus.WithError(perr).Debug("diagnose: progress notification failed")
+					}
+				}
+			}
+
 			answer, err := runBedrockAgent(
 				ctx, client,
 				viper.GetString("bedrock.model_id"),
@@ -282,6 +299,7 @@ budget_seconds: wall-clock budget for the investigation (default %d, cap %d). Th
 				int32(viper.GetInt("bedrock.max_iterations")),
 				int32(budget),
 				float32(viper.GetFloat64("bedrock.temperature")),
+				progress,
 			)
 			if err != nil {
 				return nil, err

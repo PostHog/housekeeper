@@ -39,6 +39,7 @@ docker-compose up -d              # local ClickHouse
 6. **bedrock.go** — Bedrock client (default AWS credential chain), Converse tool-use loop with iteration + wall-clock budgets
 7. **config.go** — Viper config: defaults, `HOUSEKEEPER_*` env vars (dots → underscores), config file search paths
 8. **clickhouse.go / agent.go / slack.go** — legacy `--analyze` mode (Gemini + Slack)
+9. **clickhouse_auth.go** — ClickHouse password resolution shared by every connection: the `password_file` token with a static-password fallback
 
 ### Configuration
 
@@ -48,6 +49,7 @@ Priority: CLI flags > env vars > config file > defaults. Notable keys beyond con
 - `mcp.query_extra_description` — appended ONLY to clickhouse_query (restricted-role caveats the elevated diagnose agent must not see)
 - `bedrock.*` — enables clickhouse_diagnose (region + model_id), budgets, temperature
 - `analyst_clickhouse.*` — elevated connection for the diagnose agent; falls back to `clickhouse.*` when unset
+- `clickhouse.password_file` / `analyst_clickhouse.password_file` — a rotating token (a projected ServiceAccount token validated by ch-podauth), re-read on every connect by `clickhousePassword` in `clickhouse_auth.go`. An unreadable or empty file uses the static `password`, and so does an expired token when a `password` is set
 
 ### Deployment
 
@@ -59,4 +61,4 @@ The server is deployment-agnostic: everything operator-facing is set via flags, 
 2. **Security boundary is server-side** — the SQL validator is defense-in-depth; the ClickHouse role/profile (grants, column REVOKEs) is the real boundary. Keep both in mind when changing the validator.
 3. **Tool descriptions are product surface** — most operator-facing behavior is prompt text supplied via the `mcp.extra_tool_description` / `mcp.query_extra_description` config keys, not Go code. Check deployment config first for instruction changes.
 4. **Config security** — `configs/config*.yml` are gitignored; only `*.sample`/`*.example` are tracked.
-5. **Tests** — table-driven tests in `clickhouse_mcp_test.go`, `clickhouse_test.go`, `prometheus_mcp_test.go`. Extend them when touching the validator; bypasses have happened (multiline whitespace).
+5. **Tests** — table-driven tests in `clickhouse_mcp_test.go`, `clickhouse_test.go`, `prometheus_mcp_test.go`, `clickhouse_auth_test.go`. Extend them when touching the validator; bypasses have happened (multiline whitespace).

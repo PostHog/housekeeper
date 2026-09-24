@@ -21,7 +21,7 @@
 - Configuration keys mirror `configs/config.yml.sample` (e.g., `clickhouse.host`, `bedrock.model_id`, `mcp.extra_tool_description`). Env vars use the `HOUSEKEEPER_` prefix with dots as underscores.
 
 ## Testing Guidelines
-- Table-driven tests live alongside source: `clickhouse_mcp_test.go` (SQL validator — extend this for ANY validator change), `clickhouse_test.go`, `prometheus_mcp_test.go`.
+- Table-driven tests live alongside source: `clickhouse_mcp_test.go` (SQL validator — extend this for ANY validator change), `clickhouse_test.go`, `prometheus_mcp_test.go`, `clickhouse_auth_test.go` (token-file password fallback).
 - Run tests: `go test ./...` (add `-v -race` when relevant).
 - The free-form SQL validator is security-relevant defense-in-depth; add a test for every accepted/rejected shape you change. Server-side grants/REVOKEs remain the real boundary.
 

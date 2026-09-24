@@ -27,6 +27,9 @@ func loadConfig(explicitPath string) error {
 	viper.SetDefault("clickhouse.port", 9000)
 	viper.SetDefault("clickhouse.user", "default")
 	viper.SetDefault("clickhouse.password", "")
+	// A file holding a rotating token (e.g. a projected ServiceAccount token),
+	// read on every connect. The password above stays the fallback.
+	viper.SetDefault("clickhouse.password_file", "")
 	viper.SetDefault("clickhouse.database", "default")
 	viper.SetDefault("clickhouse.cluster", "default")
 
@@ -81,6 +84,7 @@ func loadConfig(explicitPath string) error {
 	viper.SetDefault("analyst_clickhouse.port", 0)
 	viper.SetDefault("analyst_clickhouse.user", "")
 	viper.SetDefault("analyst_clickhouse.password", "")
+	viper.SetDefault("analyst_clickhouse.password_file", "")
 	viper.SetDefault("analyst_clickhouse.database", "")
 
 	if explicitPath == "" {

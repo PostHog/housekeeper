@@ -9,6 +9,10 @@ clickhouse:
   port: 9000
   user: "default"
   password: "default"
+  # Optional file holding a rotating token, read on every connect. An unreadable
+  # or empty file uses the password above, and so does an expired token when a
+  # password is set.
+  password_file: ""
   database: "default"
   cluster: "default"
   # List of databases the MCP server is allowed to query
@@ -56,10 +60,11 @@ bedrock:
 
 # Optional separate ClickHouse connection used only by the diagnose agent.
 # Leave user empty to fall back to the clickhouse.* connection above.
-# Env var equivalents: HOUSEKEEPER_ANALYST_CLICKHOUSE_USER, ..._PASSWORD
+# Env var equivalents: HOUSEKEEPER_ANALYST_CLICKHOUSE_USER, ..._PASSWORD, ..._PASSWORD_FILE
 analyst_clickhouse:
   host: ""               # empty = reuse clickhouse.host
   port: 0                # 0 = reuse clickhouse.port
   user: ""               # a dedicated user for the diagnose agent
   password: ""
+  password_file: ""      # same behavior as clickhouse.password_file
   database: ""           # empty = reuse clickhouse.database

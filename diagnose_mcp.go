@@ -72,10 +72,12 @@ func connectAnalyst() (driver.Conn, error) {
 	}
 	user := viper.GetString("analyst_clickhouse.user")
 	password := viper.GetString("analyst_clickhouse.password")
+	passwordFile := viper.GetString("analyst_clickhouse.password_file")
 	if user == "" {
 		// No dedicated analyst credentials — fall back to the default connection.
 		user = viper.GetString("clickhouse.user")
 		password = viper.GetString("clickhouse.password")
+		passwordFile = viper.GetString("clickhouse.password_file")
 		logrus.Warn("diagnose: analyst_clickhouse.user not set; using the default clickhouse connection")
 	}
 	database := viper.GetString("analyst_clickhouse.database")
@@ -86,7 +88,7 @@ func connectAnalyst() (driver.Conn, error) {
 	addr := fmt.Sprintf("%s:%d", host, port)
 	conn, err := clickhouse.Open(&clickhouse.Options{
 		Addr: []string{addr},
-		Auth: clickhouse.Auth{Database: database, Username: user, Password: password},
+		Auth: clickhouse.Auth{Database: database, Username: user, Password: clickhousePassword(passwordFile, password)},
 		TLS:  &tls.Config{InsecureSkipVerify: true},
 		ClientInfo: clickhouse.ClientInfo{
 			Products: []struct {

@@ -59,7 +59,7 @@ func connect() (driver.Conn, error) {
 			Auth: clickhouse.Auth{
 				Database: viper.GetString("clickhouse.database"),
 				Username: viper.GetString("clickhouse.user"),
-				Password: viper.GetString("clickhouse.password"),
+				Password: clickhousePassword(viper.GetString("clickhouse.password_file"), viper.GetString("clickhouse.password")),
 			},
 			TLS: &tls.Config{InsecureSkipVerify: true},
 			ClientInfo: clickhouse.ClientInfo{

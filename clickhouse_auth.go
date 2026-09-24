@@ -25,18 +25,18 @@ func clickhousePassword(passwordFile, password string) string {
 	}
 	raw, err := os.ReadFile(passwordFile)
 	if err != nil {
-		logrus.WithError(err).WithField("path", passwordFile).Warn("clickhouse: password file is not readable, using the static password")
+		logrus.WithError(err).Warn("clickhouse: password file is not readable, using the static password")
 		return password
 	}
 	token := strings.TrimSpace(string(raw))
 	if token == "" {
-		logrus.WithField("path", passwordFile).Warn("clickhouse: password file is empty, using the static password")
+		logrus.Warn("clickhouse: password file is empty, using the static password")
 		return password
 	}
 	// The kubelet stops refreshing a terminating pod's token, so a long shutdown
 	// can leave an expired token that the server rejects.
 	if password != "" && tokenExpired(token, time.Now()) {
-		logrus.WithField("path", passwordFile).Warn("clickhouse: token has expired, using the static password")
+		logrus.Warn("clickhouse: token has expired, using the static password")
 		return password
 	}
 	return token

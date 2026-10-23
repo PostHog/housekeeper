@@ -85,3 +85,25 @@ func TestHTTPHandlerOriginCheck(t *testing.T) {
 		})
 	}
 }
+
+func TestQueryInputSchema(t *testing.T) {
+	schema, err := queryInputSchema()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := schema.Properties["columns"].Type; got != "array" {
+		t.Errorf(`columns type = %q, want "array"`, got)
+	}
+	resolved, err := schema.Resolve(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range []map[string]any{
+		{"sql": "SELECT 1"},
+		{"table": "system.one", "columns": []any{"dummy"}, "limit": 1},
+	} {
+		if err := resolved.Validate(args); err != nil {
+			t.Errorf("Validate(%v) = %v, want nil", args, err)
+		}
+	}
+}

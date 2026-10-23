@@ -7,7 +7,8 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.43.5
 	github.com/aws/aws-sdk-go-v2/config v1.27.43
 	github.com/aws/aws-sdk-go-v2/service/bedrockruntime v1.57.2
-	github.com/modelcontextprotocol/go-sdk v0.2.0
+	github.com/google/jsonschema-go v0.4.3
+	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/prometheus/client_golang v1.23.0
 	github.com/prometheus/common v0.65.0
 	github.com/sirupsen/logrus v1.9.3
@@ -58,6 +59,7 @@ require (
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/sagikazarmark/locafero v0.7.0 // indirect
 	github.com/segmentio/asm v1.2.0 // indirect
+	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/sourcegraph/conc v0.3.0 // indirect
 	github.com/spf13/afero v1.12.0 // indirect
@@ -73,8 +75,11 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/net v0.61.0 // indirect
+	golang.org/x/oauth2 v0.36.0 // indirect
+	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
+	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/api v0.278.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260706201446-f0a921348800 // indirect
 	google.golang.org/grpc v1.84.0 // indirect

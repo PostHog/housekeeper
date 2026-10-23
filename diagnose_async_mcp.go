@@ -127,20 +127,20 @@ budget_seconds: wall-clock budget (default %d, cap %d). Finished results stay po
 			Description: startDesc,
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		},
-		func(ctx context.Context, ss *mcp.ServerSession, req *mcp.CallToolParamsFor[diagnoseAsyncArgs]) (*mcp.CallToolResultFor[map[string]any], error) {
-			q := strings.TrimSpace(req.Arguments.Question)
+		func(ctx context.Context, req *mcp.CallToolRequest, args diagnoseAsyncArgs) (*mcp.CallToolResult, map[string]any, error) {
+			q := strings.TrimSpace(args.Question)
 			if q == "" {
-				return nil, fmt.Errorf("question is required")
+				return nil, nil, fmt.Errorf("question is required")
 			}
 			if n := store.runningCount(); n >= maxConcurrent {
-				return nil, fmt.Errorf("%d investigations already running (max %d) — poll existing jobs or retry shortly", n, maxConcurrent)
+				return nil, nil, fmt.Errorf("%d investigations already running (max %d) — poll existing jobs or retry shortly", n, maxConcurrent)
 			}
 
 			id, err := newJobID()
 			if err != nil {
-				return nil, fmt.Errorf("generating job id: %w", err)
+				return nil, nil, fmt.Errorf("generating job id: %w", err)
 			}
-			budget := resolveAsyncBudgetSeconds(req.Arguments.BudgetSeconds)
+			budget := resolveAsyncBudgetSeconds(args.BudgetSeconds)
 			job := &diagnoseJob{
 				ID: id, Question: q, Status: "running",
 				Started: time.Now(), Budget: budget,
@@ -150,16 +150,14 @@ budget_seconds: wall-clock budget (default %d, cap %d). Finished results stay po
 			store.jobs[id] = job
 			store.mu.Unlock()
 
-			go runDiagnoseJob(store, job, q, req.Arguments.Cluster, budget)
+			go runDiagnoseJob(store, job, q, args.Cluster, budget)
 
 			logrus.WithFields(logrus.Fields{"job_id": id, "budget_seconds": budget}).Info("diagnose: async job started")
 			summary := fmt.Sprintf("started job %s (budget %ds) — poll clickhouse_diagnose_result with this job_id in ~30s", id, budget)
-			return &mcp.CallToolResultFor[map[string]any]{
+			data := map[string]any{"job_id": id, "status": "running", "budget_seconds": budget}
+			return &mcp.CallToolResult{
 				Content: []mcp.Content{&mcp.TextContent{Text: summary}},
-				StructuredContent: map[string]any{
-					"job_id": id, "status": "running", "budget_seconds": budget,
-				},
-			}, nil
+			}, data, nil
 		},
 	)
 
@@ -171,10 +169,10 @@ budget_seconds: wall-clock budget (default %d, cap %d). Finished results stay po
 			Description: "Fetch the status/result of a clickhouse_diagnose_async job. Returns status running (with elapsed seconds and the agent's turn counter), done (with the answer), or error. Poll every ~30s while running.",
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		},
-		func(ctx context.Context, ss *mcp.ServerSession, req *mcp.CallToolParamsFor[diagnoseResultArgs]) (*mcp.CallToolResultFor[map[string]any], error) {
-			id := strings.TrimSpace(req.Arguments.JobID)
+		func(ctx context.Context, req *mcp.CallToolRequest, args diagnoseResultArgs) (*mcp.CallToolResult, map[string]any, error) {
+			id := strings.TrimSpace(args.JobID)
 			if id == "" {
-				return nil, fmt.Errorf("job_id is required")
+				return nil, nil, fmt.Errorf("job_id is required")
 			}
 			store.mu.Lock()
 			store.purgeLocked()
@@ -185,7 +183,7 @@ budget_seconds: wall-clock budget (default %d, cap %d). Finished results stay po
 			}
 			store.mu.Unlock()
 			if !ok {
-				return nil, fmt.Errorf("unknown job %q (finished jobs expire after %d minutes)", id, int(finishedJobTTL.Minutes()))
+				return nil, nil, fmt.Errorf("unknown job %q (finished jobs expire after %d minutes)", id, int(finishedJobTTL.Minutes()))
 			}
 
 			data := map[string]any{
@@ -207,10 +205,9 @@ budget_seconds: wall-clock budget (default %d, cap %d). Finished results stay po
 				data["error"] = snapshot.Err
 				text = "investigation failed: " + snapshot.Err
 			}
-			return &mcp.CallToolResultFor[map[string]any]{
-				Content:           []mcp.Content{&mcp.TextContent{Text: text}},
-				StructuredContent: data,
-			}, nil
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: text}},
+			}, data, nil
 		},
 	)
 }

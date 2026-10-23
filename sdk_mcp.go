@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/prometheus/common/model"
 	"github.com/sirupsen/logrus"
@@ -49,7 +51,10 @@ system.* tables are per-node (wrap them yourself in sql mode); replicated tables
 		toolDesc = toolDesc + "\n\nDeployment-specific guidance:\n" + extra
 	}
 
-	// Register ClickHouse tool with inferred input schema (from queryArgs)
+	inputSchema, err := queryInputSchema()
+	if err != nil {
+		return fmt.Errorf("failed to build the clickhouse_query input schema: %v", err)
+	}
 	mcp.AddTool[queryArgs, map[string]any](
 		srv,
 		&mcp.Tool{
@@ -57,24 +62,23 @@ system.* tables are per-node (wrap them yourself in sql mode); replicated tables
 			Title:       "Query ClickHouse tables",
 			Description: toolDesc,
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+			InputSchema: inputSchema,
 		},
-		func(ctx context.Context, ss *mcp.ServerSession, req *mcp.CallToolParamsFor[queryArgs]) (*mcp.CallToolResultFor[map[string]any], error) {
-			qa := req.Arguments
+		func(ctx context.Context, req *mcp.CallToolRequest, qa queryArgs) (*mcp.CallToolResult, map[string]any, error) {
 			// Note: OrderBy might be empty, which is valid
 			if err := validateQueryArgs(qa); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			rows, err := runClickhouseQuery(qa)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			data := map[string]any{"results": rows, "count": len(rows)}
 			// Produce a concise, useful text summary for the LLM/UI
 			summary := summarizeRows(rows)
-			return &mcp.CallToolResultFor[map[string]any]{
-				Content:           []mcp.Content{&mcp.TextContent{Text: summary}},
-				StructuredContent: data,
-			}, nil
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: summary}},
+			}, data, nil
 		},
 	)
 
@@ -96,6 +100,17 @@ step: Go duration ("30s", "1m"). Pick one that yields <~50 points over the windo
 	return runHTTPMCPServer(srv)
 }
 
+// queryInputSchema returns the clickhouse_query input schema, inferred from queryArgs.
+func queryInputSchema() (*jsonschema.Schema, error) {
+	// jsonschema-go infers ["null", "array"] for a slice. Some tool-calling APIs
+	// accept only one type per property, so declare "columns" as a plain array.
+	return jsonschema.For[queryArgs](&jsonschema.ForOptions{
+		TypeSchemas: map[reflect.Type]*jsonschema.Schema{
+			reflect.TypeFor[[]string](): {Type: "array", Items: &jsonschema.Schema{Type: "string"}},
+		},
+	})
+}
+
 func registerPrometheusTool(srv *mcp.Server, name, title, description, endpoint string) {
 	mcp.AddTool[prometheusArgs, map[string]any](
 		srv,
@@ -105,26 +120,24 @@ func registerPrometheusTool(srv *mcp.Server, name, title, description, endpoint 
 			Description: description,
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		},
-		func(ctx context.Context, ss *mcp.ServerSession, req *mcp.CallToolParamsFor[prometheusArgs]) (*mcp.CallToolResultFor[map[string]any], error) {
-			pa := req.Arguments
-
+		func(ctx context.Context, req *mcp.CallToolRequest, pa prometheusArgs) (*mcp.CallToolResult, map[string]any, error) {
 			if pa.Query == "" {
-				return nil, fmt.Errorf("query is required")
+				return nil, nil, fmt.Errorf("query is required")
 			}
 
 			start, end, err := validateAndParseTimeRange(pa.Start, pa.End)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 
 			step, err := time.ParseDuration(pa.Step)
 			if err != nil {
-				return nil, fmt.Errorf("invalid step duration: %v", err)
+				return nil, nil, fmt.Errorf("invalid step duration: %v", err)
 			}
 
 			result, err := queryPrometheus(endpoint, pa.Query, start, end, step)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 
 			data := map[string]any{"result": result}
@@ -148,10 +161,9 @@ func registerPrometheusTool(srv *mcp.Server, name, title, description, endpoint 
 				summary = fmt.Sprintf("%v", result)
 			}
 
-			return &mcp.CallToolResultFor[map[string]any]{
-				Content:           []mcp.Content{&mcp.TextContent{Text: summary}},
-				StructuredContent: data,
-			}, nil
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: summary}},
+			}, data, nil
 		},
 	)
 }
@@ -186,13 +198,9 @@ func newHTTPHandler(srv *mcp.Server, authToken string) http.Handler {
 
 	// MCP streamable HTTP transport (2025-03-26 spec).
 	// Client sends POST / with Accept: application/json, text/event-stream
-	streamHandler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
-		logrus.WithFields(logrus.Fields{
-			"remote_addr": r.RemoteAddr,
-			"user_agent":  r.Header.Get("User-Agent"),
-		}).Info("New MCP session opened")
+	streamHandler := sessionLoggingMiddleware(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
 		return srv
-	}, nil)
+	}, nil))
 
 	if authToken != "" {
 		mux.Handle("/", bearerAuthMiddleware(authToken, streamHandler))
@@ -232,6 +240,20 @@ func requestLoggingMiddleware(next http.Handler) http.Handler {
 			}).Debug("Incoming request")
 		}
 		next.ServeHTTP(w, r)
+	})
+}
+
+// sessionLoggingMiddleware logs each new MCP session. The SDK calls its getServer
+// callback on every request, so that callback cannot tell when a session opens.
+func sessionLoggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(w, r)
+		if r.Header.Get("Mcp-Session-Id") == "" && w.Header().Get("Mcp-Session-Id") != "" {
+			logrus.WithFields(logrus.Fields{
+				"remote_addr": r.RemoteAddr,
+				"user_agent":  r.Header.Get("User-Agent"),
+			}).Info("New MCP session opened")
+		}
 	})
 }
 

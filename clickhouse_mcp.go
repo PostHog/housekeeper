@@ -19,7 +19,7 @@ const maxSafeJSONInt = 1<<53 - 1
 
 // JSON-RPC transport types
 type queryArgs struct {
-	Table   string   `json:"table"`
+	Table   string   `json:"table,omitempty"`
 	Columns []string `json:"columns,omitempty"`
 	Where   string   `json:"where,omitempty"`
 	OrderBy string   `json:"order_by,omitempty"`
@@ -82,7 +82,7 @@ func runClickhouseQuery(a queryArgs) ([]map[string]interface{}, error) {
 		} else {
 			sb.WriteString("*")
 		}
-		
+
 		// Only use clusterAllReplicas for system tables
 		if strings.HasPrefix(strings.ToLower(a.Table), "system.") {
 			cluster := viper.GetString("clickhouse.cluster")
@@ -90,7 +90,7 @@ func runClickhouseQuery(a queryArgs) ([]map[string]interface{}, error) {
 		} else {
 			fmt.Fprintf(&sb, " FROM %s", a.Table)
 		}
-		
+
 		if a.Where != "" {
 			sb.WriteString(" WHERE ")
 			sb.WriteString(a.Where)

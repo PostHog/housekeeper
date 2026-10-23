@@ -292,15 +292,15 @@ For investigations longer than your client can wait, use clickhouse_diagnose_asy
 			Description: desc,
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		},
-		func(ctx context.Context, ss *mcp.ServerSession, req *mcp.CallToolParamsFor[diagnoseArgs]) (*mcp.CallToolResultFor[map[string]any], error) {
-			q := strings.TrimSpace(req.Arguments.Question)
+		func(ctx context.Context, req *mcp.CallToolRequest, args diagnoseArgs) (*mcp.CallToolResult, map[string]any, error) {
+			q := strings.TrimSpace(args.Question)
 			if q == "" {
-				return nil, fmt.Errorf("question is required")
+				return nil, nil, fmt.Errorf("question is required")
 			}
 
-			budget := resolveBudgetSeconds(req.Arguments.BudgetSeconds)
+			budget := resolveBudgetSeconds(args.BudgetSeconds)
 			logrus.WithFields(logrus.Fields{
-				"budget_seconds": budget, "requested": req.Arguments.BudgetSeconds,
+				"budget_seconds": budget, "requested": args.BudgetSeconds,
 			}).Debug("diagnose: budget resolved")
 
 			// Emit MCP progress notifications (one per model turn) when the
@@ -308,9 +308,9 @@ For investigations longer than your client can wait, use clickhouse_diagnose_asy
 			// their tool timeout on each notification, which lets budgets
 			// beyond the client's fixed timeout actually complete.
 			var progress progressFunc
-			if token := req.GetProgressToken(); token != nil {
+			if token := req.Params.GetProgressToken(); token != nil {
 				progress = func(iter int32, msg string) {
-					if perr := ss.NotifyProgress(ctx, &mcp.ProgressNotificationParams{
+					if perr := req.Session.NotifyProgress(ctx, &mcp.ProgressNotificationParams{
 						ProgressToken: token,
 						Progress:      float64(iter),
 						Message:       msg,
@@ -320,15 +320,14 @@ For investigations longer than your client can wait, use clickhouse_diagnose_asy
 				}
 			}
 
-			answer, err := runDiagnosis(ctx, q, req.Arguments.Cluster, budget, progress)
+			answer, err := runDiagnosis(ctx, q, args.Cluster, budget, progress)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 
-			return &mcp.CallToolResultFor[map[string]any]{
-				Content:           []mcp.Content{&mcp.TextContent{Text: answer}},
-				StructuredContent: map[string]any{"answer": answer},
-			}, nil
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: answer}},
+			}, map[string]any{"answer": answer}, nil
 		},
 	)
 }

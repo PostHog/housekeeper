@@ -89,6 +89,7 @@ The server uses the official go-sdk and serves MCP over HTTP using the streamabl
 - **Default mode**: `./housekeeper` (runs the HTTP MCP server)
 - **Analysis mode**: `./housekeeper --analyze` (runs Gemini AI analysis)
 - Optional bearer auth: set `http.auth_token` (or `--http-auth-token`) and clients must present it.
+- The server rejects cross-origin requests from browsers. A browser-based client must be served from the same origin as the server, or connect through a local proxy such as mcp-remote.
 - Methods implemented:
   - `initialize`
   - `tools/list`

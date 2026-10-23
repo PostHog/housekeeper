@@ -161,6 +161,20 @@ func runHTTPMCPServer(srv *mcp.Server) error {
 	addr := viper.GetString("http.addr")
 	authToken := viper.GetString("http.auth_token")
 
+	handler := newHTTPHandler(srv, authToken)
+
+	logrus.WithFields(logrus.Fields{
+		"addr":       addr,
+		"mcp_url":    "http://<host>" + addr + "/",
+		"health_url": "http://<host>" + addr + "/health",
+		"auth":       authToken != "",
+	}).Info("MCP server ready")
+
+	return http.ListenAndServe(addr, handler)
+}
+
+// newHTTPHandler returns the routes of the HTTP server, wrapped in its middleware.
+func newHTTPHandler(srv *mcp.Server, authToken string) http.Handler {
 	mux := http.NewServeMux()
 
 	// Health check — no auth required; used by k8s probes and connectivity tests.
@@ -188,17 +202,18 @@ func runHTTPMCPServer(srv *mcp.Server) error {
 		logrus.Info("HTTP authentication disabled (no auth_token configured)")
 	}
 
-	// Wrap everything with CORS + request logging.
-	handler := requestLoggingMiddleware(corsMiddleware(mux))
+	// Reject cross-origin requests from browsers. Clients that are not browsers send
+	// no Origin or Sec-Fetch-Site header, so the check lets them through.
+	originCheck := http.NewCrossOriginProtection()
+	originCheck.SetDenyHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		logrus.WithFields(logrus.Fields{
+			"remote_addr": r.RemoteAddr,
+			"origin":      r.Header.Get("Origin"),
+		}).Warn("Rejected cross-origin request")
+		http.Error(w, "Forbidden", http.StatusForbidden)
+	}))
 
-	logrus.WithFields(logrus.Fields{
-		"addr":       addr,
-		"mcp_url":    "http://<host>" + addr + "/",
-		"health_url": "http://<host>" + addr + "/health",
-		"auth":       authToken != "",
-	}).Info("MCP server ready")
-
-	return http.ListenAndServe(addr, handler)
+	return requestLoggingMiddleware(originCheck.Handler(mux))
 }
 
 // requestLoggingMiddleware logs every incoming HTTP request (except health checks).
@@ -215,20 +230,6 @@ func requestLoggingMiddleware(next http.Handler) http.Handler {
 				"origin":      r.Header.Get("Origin"),
 				"has_auth":    r.Header.Get("Authorization") != "",
 			}).Debug("Incoming request")
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-// corsMiddleware adds CORS headers so Claude.ai (and other web-based MCP clients) can connect.
-func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept")
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
 		}
 		next.ServeHTTP(w, r)
 	})

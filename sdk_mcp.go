@@ -198,9 +198,11 @@ func newHTTPHandler(srv *mcp.Server, authToken string) http.Handler {
 
 	// MCP streamable HTTP transport (2025-03-26 spec).
 	// Client sends POST / with Accept: application/json, text/event-stream
-	streamHandler := sessionLoggingMiddleware(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
+	// Stateless: no Mcp-Session-Id, so any replica can serve any request. Every tool
+	// answers within its own request, so the server never needs to call the client.
+	streamHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
 		return srv
-	}, nil))
+	}, &mcp.StreamableHTTPOptions{Stateless: true})
 
 	if authToken != "" {
 		mux.Handle("/", bearerAuthMiddleware(authToken, streamHandler))
@@ -240,20 +242,6 @@ func requestLoggingMiddleware(next http.Handler) http.Handler {
 			}).Debug("Incoming request")
 		}
 		next.ServeHTTP(w, r)
-	})
-}
-
-// sessionLoggingMiddleware logs each new MCP session. The SDK calls its getServer
-// callback on every request, so that callback cannot tell when a session opens.
-func sessionLoggingMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		next.ServeHTTP(w, r)
-		if r.Header.Get("Mcp-Session-Id") == "" && w.Header().Get("Mcp-Session-Id") != "" {
-			logrus.WithFields(logrus.Fields{
-				"remote_addr": r.RemoteAddr,
-				"user_agent":  r.Header.Get("User-Agent"),
-			}).Info("New MCP session opened")
-		}
 	})
 }
 

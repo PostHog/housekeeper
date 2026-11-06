@@ -183,7 +183,7 @@ budget_seconds: wall-clock budget (default %d, cap %d). Finished results stay po
 			}
 			store.mu.Unlock()
 			if !ok {
-				return nil, nil, fmt.Errorf("unknown job %q (finished jobs expire after %d minutes)", id, int(finishedJobTTL.Minutes()))
+				return nil, nil, fmt.Errorf("unknown job %q (finished jobs expire after %d minutes, and a job is only known to the replica that started it)", id, int(finishedJobTTL.Minutes()))
 			}
 
 			data := map[string]any{

@@ -86,6 +86,39 @@ func TestHTTPHandlerOriginCheck(t *testing.T) {
 	}
 }
 
+// Each handler stands in for one replica. A request that skips initialize, sent to a
+// replica that never saw the client, must still succeed, and no session ID may be issued.
+func TestHTTPHandlerStateless(t *testing.T) {
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, &mcp.ServerOptions{})
+	replicaA := newHTTPHandler(srv, "")
+	replicaB := newHTTPHandler(srv, "")
+
+	post := func(h http.Handler, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "https://housekeeper.example.com/", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	initRec := post(replicaA, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"0"}}}`)
+	if initRec.Code != http.StatusOK {
+		t.Fatalf("initialize on replica A: status = %d, want 200", initRec.Code)
+	}
+	if got := initRec.Header().Get("Mcp-Session-Id"); got != "" {
+		t.Errorf("initialize issued Mcp-Session-Id %q, want none", got)
+	}
+
+	listRec := post(replicaB, `{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`)
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("tools/list on replica B: status = %d, want 200 (body %q)", listRec.Code, listRec.Body.String())
+	}
+	if !strings.Contains(listRec.Body.String(), `"tools"`) {
+		t.Errorf("tools/list on replica B: body %q has no tools result", listRec.Body.String())
+	}
+}
+
 func TestQueryInputSchema(t *testing.T) {
 	schema, err := queryInputSchema()
 	if err != nil {

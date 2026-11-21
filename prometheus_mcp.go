@@ -59,13 +59,12 @@ func initPrometheus() error {
 	return nil
 }
 
-func queryPrometheus(endpoint, query string, start, end time.Time, step time.Duration) (interface{}, error) {
+func queryPrometheus(ctx context.Context, endpoint, query string, start, end time.Time, step time.Duration) (interface{}, error) {
 	client, ok := promClients[endpoint]
 	if !ok {
 		return nil, fmt.Errorf("prometheus endpoint %q not configured", endpoint)
 	}
 
-	ctx := context.Background()
 	r := v1.Range{Start: start, End: end, Step: step}
 
 	result, _, err := client.QueryRange(ctx, query, r)
@@ -75,17 +74,36 @@ func queryPrometheus(endpoint, query string, start, end time.Time, step time.Dur
 	return summarizePromResult(result)
 }
 
-func validateAndParseTimeRange(start, end string) (time.Time, time.Time, error) {
-	parsed_start, err := parseTime(start)
-	if err != nil {
-		return time.Time{}, time.Time{}, fmt.Errorf("invalid start time format: %v", err)
-	}
+// Range-query limits. Prometheus itself rejects more than 11,000 points per
+// series; the series and sample caps bound the size of a tool response.
+const (
+	promDefaultRange    = time.Hour
+	promTargetPoints    = 50
+	promMinDefaultStep  = 15 * time.Second
+	promMaxPoints       = 11000
+	promMaxSeries       = 500
+	promMaxRawSamples   = 10000
+	promTruncatedNotice = "result truncated — narrow the query with label matchers or aggregate (sum by, topk)"
+)
 
+// validateAndParseTimeRange parses start and end. An empty end is now; an
+// empty start is one hour before end.
+func validateAndParseTimeRange(start, end string) (time.Time, time.Time, error) {
 	parsed_end := time.Now()
 	if end != "" {
+		var err error
 		parsed_end, err = parseTime(end)
 		if err != nil {
 			return time.Time{}, time.Time{}, fmt.Errorf("invalid end time format: %v", err)
+		}
+	}
+
+	parsed_start := parsed_end.Add(-promDefaultRange)
+	if start != "" {
+		var err error
+		parsed_start, err = parseTime(start)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("invalid start time format: %v", err)
 		}
 	}
 
@@ -116,6 +134,34 @@ func validateAndParseTimeRange(start, end string) (time.Time, time.Time, error) 
 	return parsed_start, parsed_end, nil
 }
 
+// resolveStep parses step, or picks one giving about promTargetPoints points
+// (rounded up to whole seconds, at least promMinDefaultStep) when it is empty.
+// It rejects a step <= 0 and one that yields more than promMaxPoints points.
+func resolveStep(step string, start, end time.Time) (time.Duration, error) {
+	window := end.Sub(start)
+	var d time.Duration
+	if step == "" {
+		d = (window/promTargetPoints + time.Second - 1).Truncate(time.Second)
+		if d < promMinDefaultStep {
+			d = promMinDefaultStep
+		}
+	} else {
+		var err error
+		d, err = time.ParseDuration(step)
+		if err != nil {
+			return 0, fmt.Errorf("invalid step duration: %v", err)
+		}
+		if d <= 0 {
+			return 0, fmt.Errorf("step must be positive, got %s", step)
+		}
+	}
+	if points := int64(window/d) + 1; points > promMaxPoints {
+		minStep := (window/(promMaxPoints-1) + time.Second - 1).Truncate(time.Second)
+		return 0, fmt.Errorf("step %s over %s gives %d points per series (max %d); use a step of at least %s", d, window, points, promMaxPoints, minStep)
+	}
+	return d, nil
+}
+
 func parseTime(timeStr string) (time.Time, error) {
 	if strings.HasPrefix(timeStr, "-") {
 		d, err := time.ParseDuration(timeStr)
@@ -127,7 +173,10 @@ func parseTime(timeStr string) (time.Time, error) {
 	return time.Parse(time.RFC3339, timeStr)
 }
 
-// summarizePromResult processes the raw Prometheus result
+// summarizePromResult reduces a range-query result for the tool response:
+// the last value of each series, and the raw matrix. Both are capped
+// (promMaxSeries series, promMaxRawSamples samples in raw_result); when
+// anything is dropped, "truncated" is true and series_total gives the count.
 func summarizePromResult(result interface{}) (interface{}, error) {
 	matrix, ok := result.(model.Matrix)
 	if !ok {
@@ -139,21 +188,45 @@ func summarizePromResult(result interface{}) (interface{}, error) {
 		return result, nil
 	}
 
-	// For matrix results, just get the last value from each series
+	truncated := len(matrix) > promMaxSeries
+	series := matrix
+	if truncated {
+		series = matrix[:promMaxSeries]
+	}
+
 	var lastValues []map[string]interface{}
-	for _, series := range matrix {
-		if len(series.Values) > 0 {
-			lastPoint := series.Values[len(series.Values)-1]
+	for _, s := range series {
+		if len(s.Values) > 0 {
+			lastPoint := s.Values[len(s.Values)-1]
 			lastValues = append(lastValues, map[string]interface{}{
-				"metric": series.Metric,
+				"metric": s.Metric,
 				"value":  lastPoint.Value,
 				"time":   lastPoint.Timestamp.Time(),
 			})
 		}
 	}
 
+	raw := make(model.Matrix, 0, len(series))
+	budget := promMaxRawSamples
+	for _, s := range series {
+		if budget <= 0 {
+			truncated = true
+			break
+		}
+		values := s.Values
+		if len(values) > budget {
+			// Keep the most recent samples.
+			values = values[len(values)-budget:]
+			truncated = true
+		}
+		budget -= len(values)
+		raw = append(raw, &model.SampleStream{Metric: s.Metric, Values: values, Histograms: s.Histograms})
+	}
+
 	return map[string]interface{}{
-		"raw_result":  result,
-		"last_values": lastValues,
+		"raw_result":   raw,
+		"last_values":  lastValues,
+		"series_total": len(matrix),
+		"truncated":    truncated,
 	}, nil
 }

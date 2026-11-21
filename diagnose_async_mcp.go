@@ -28,9 +28,9 @@ import (
 // finishedJobTTL is how long completed/failed jobs stay pollable.
 const finishedJobTTL = 30 * time.Minute
 
-// jobRunGrace is added to a job's budget for its context deadline, covering
+// diagnoseGrace is added to a job's budget for its context deadline, covering
 // the final summarize turn(s) after the budget itself is exhausted.
-const jobRunGrace = 90 * time.Second
+const diagnoseGrace = 90 * time.Second
 
 type diagnoseAsyncArgs struct {
 	Question string `json:"question"`
@@ -57,34 +57,174 @@ type diagnoseJob struct {
 	Budget    int
 }
 
-type diagnoseJobStore struct {
-	mu   sync.Mutex
-	jobs map[string]*diagnoseJob
+// diagnoseFunc runs one investigation; runDiagnosis in production.
+type diagnoseFunc func(ctx context.Context, question, cluster string, budgetSeconds int, progress progressFunc) (string, error)
+
+// diagnoseRunner holds the async job store and the one concurrency limit
+// shared by synchronous and async diagnoses. The limit is checked and the slot
+// reserved under the same lock that inserts a job, so concurrent starts cannot
+// overshoot it.
+type diagnoseRunner struct {
+	mu      sync.Mutex
+	jobs    map[string]*diagnoseJob
+	active  int // synchronous calls plus running async jobs
+	max     int
+	closing bool // shutdown has begun; no new async jobs
+
+	now func() time.Time
+	run diagnoseFunc
+
+	// Async jobs run on baseCtx, which shutdown cancels once its wait is over.
+	baseCtx context.Context
+	cancel  context.CancelFunc
+	wg      sync.WaitGroup
 }
 
-func newDiagnoseJobStore() *diagnoseJobStore {
-	return &diagnoseJobStore{jobs: map[string]*diagnoseJob{}}
+func newDiagnoseRunner(maxConcurrent int, run diagnoseFunc) *diagnoseRunner {
+	if maxConcurrent < 1 {
+		maxConcurrent = 1
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &diagnoseRunner{
+		jobs: map[string]*diagnoseJob{}, max: maxConcurrent,
+		now: time.Now, run: run,
+		baseCtx: ctx, cancel: cancel,
+	}
 }
 
-// purgeLocked drops finished jobs past their TTL. Callers hold s.mu.
-func (s *diagnoseJobStore) purgeLocked() {
-	for id, j := range s.jobs {
-		if j.Status != "running" && time.Since(j.Finished) > finishedJobTTL {
-			delete(s.jobs, id)
+// errBusyLocked is the error for a reached concurrency limit. Callers hold r.mu.
+func (r *diagnoseRunner) errBusyLocked() error {
+	return fmt.Errorf("%d investigations already running (max %d) — poll existing jobs or retry shortly", r.active, r.max)
+}
+
+// acquire reserves a slot for a synchronous diagnosis; release frees it.
+func (r *diagnoseRunner) acquire() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.active >= r.max {
+		return r.errBusyLocked()
+	}
+	r.active++
+	return nil
+}
+
+func (r *diagnoseRunner) release() {
+	r.mu.Lock()
+	r.active--
+	r.mu.Unlock()
+}
+
+// purgeLocked drops finished jobs past their TTL. Callers hold r.mu.
+func (r *diagnoseRunner) purgeLocked() {
+	for id, j := range r.jobs {
+		if j.Status != "running" && r.now().Sub(j.Finished) > finishedJobTTL {
+			delete(r.jobs, id)
 		}
 	}
 }
 
-func (s *diagnoseJobStore) runningCount() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	n := 0
-	for _, j := range s.jobs {
-		if j.Status == "running" {
-			n++
-		}
+// start reserves a slot, records a running job and runs it in the background.
+func (r *diagnoseRunner) start(question, cluster string, budget int) (diagnoseJob, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.purgeLocked()
+	if r.closing {
+		return diagnoseJob{}, fmt.Errorf("server is shutting down; retry shortly")
 	}
-	return n
+	if r.active >= r.max {
+		return diagnoseJob{}, r.errBusyLocked()
+	}
+	id, err := newJobID()
+	if err != nil {
+		return diagnoseJob{}, fmt.Errorf("generating job id: %w", err)
+	}
+	job := &diagnoseJob{ID: id, Question: question, Status: "running", Started: r.now(), Budget: budget}
+	r.jobs[id] = job
+	r.active++
+	r.wg.Add(1)
+	go r.runJob(job, question, cluster, budget)
+	return *job, nil
+}
+
+// get returns a snapshot of a job.
+func (r *diagnoseRunner) get(id string) (diagnoseJob, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.purgeLocked()
+	job, ok := r.jobs[id]
+	if !ok {
+		return diagnoseJob{}, false
+	}
+	return *job, true
+}
+
+// runJob executes one async investigation on the runner's background context
+// (the originating request has already returned) and records the outcome. A
+// panic is contained to the job.
+func (r *diagnoseRunner) runJob(job *diagnoseJob, question, cluster string, budget int) {
+	defer r.wg.Done()
+	status, answer, errMsg := "error", "", ""
+	defer func() {
+		if rec := recover(); rec != nil {
+			logrus.WithField("job_id", job.ID).Errorf("diagnose: async job panic: %v", rec)
+			status, answer, errMsg = "error", "", fmt.Sprintf("internal error: %v", rec)
+		}
+		r.mu.Lock()
+		job.Status, job.Answer, job.Err = status, answer, errMsg
+		job.Finished = r.now()
+		r.active--
+		r.mu.Unlock()
+	}()
+
+	ctx, cancel := context.WithTimeout(r.baseCtx, time.Duration(budget)*time.Second+diagnoseGrace)
+	defer cancel()
+	progress := func(iter int32, _ string) {
+		r.mu.Lock()
+		job.Iteration = iter
+		r.mu.Unlock()
+	}
+
+	ans, err := r.run(ctx, question, cluster, budget, progress)
+	if err != nil {
+		logrus.WithError(err).WithField("job_id", job.ID).Warn("diagnose: async job failed")
+		errMsg = err.Error()
+		return
+	}
+	logrus.WithFields(logrus.Fields{
+		"job_id": job.ID, "elapsed": r.now().Sub(job.Started).Seconds(),
+	}).Info("diagnose: async job complete")
+	status, answer = "done", ans
+}
+
+// shutdown stops new async jobs and waits for running ones until ctx is done.
+// Jobs still running then are cancelled, and it waits briefly for them to
+// record their outcome.
+func (r *diagnoseRunner) shutdown(ctx context.Context) {
+	r.mu.Lock()
+	r.closing = true
+	running := r.active
+	r.mu.Unlock()
+	if running > 0 {
+		logrus.WithField("running", running).Info("diagnose: waiting for running investigations")
+	}
+	done := make(chan struct{})
+	go func() {
+		r.wg.Wait()
+		close(done)
+	}()
+	stopNew := context.AfterFunc(ctx, r.cancel)
+	defer stopNew()
+	select {
+	case <-done:
+		r.cancel()
+		return
+	case <-ctx.Done():
+	}
+	logrus.Warn("diagnose: shutdown wait ended; cancelling running investigations")
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+	}
 }
 
 func newJobID() (string, error) {
@@ -110,10 +250,7 @@ func resolveAsyncBudgetSeconds(requested int) int {
 
 // registerDiagnoseAsyncTools adds the async start/poll tool pair. Registered
 // alongside the synchronous tool whenever Bedrock is configured.
-func registerDiagnoseAsyncTools(srv *mcp.Server) {
-	store := newDiagnoseJobStore()
-	maxConcurrent := viper.GetInt("bedrock.max_concurrent_jobs")
-
+func registerDiagnoseAsyncTools(srv *mcp.Server, runner *diagnoseRunner) {
 	startDesc := fmt.Sprintf(`Start a ClickHouse investigation in the background and return a job id immediately — use this instead of clickhouse_diagnose when the investigation should run longer than your client's tool timeout. Same in-account agent and elevated access as clickhouse_diagnose; poll clickhouse_diagnose_result for the answer (a model turn takes ~15-40s, so poll every ~30s).
 
 budget_seconds: wall-clock budget (default %d, cap %d). Finished results stay pollable for %d minutes.`,
@@ -132,29 +269,15 @@ budget_seconds: wall-clock budget (default %d, cap %d). Finished results stay po
 			if q == "" {
 				return nil, nil, fmt.Errorf("question is required")
 			}
-			if n := store.runningCount(); n >= maxConcurrent {
-				return nil, nil, fmt.Errorf("%d investigations already running (max %d) — poll existing jobs or retry shortly", n, maxConcurrent)
-			}
-
-			id, err := newJobID()
-			if err != nil {
-				return nil, nil, fmt.Errorf("generating job id: %w", err)
-			}
 			budget := resolveAsyncBudgetSeconds(args.BudgetSeconds)
-			job := &diagnoseJob{
-				ID: id, Question: q, Status: "running",
-				Started: time.Now(), Budget: budget,
+			job, err := runner.start(q, args.Cluster, budget)
+			if err != nil {
+				return nil, nil, err
 			}
-			store.mu.Lock()
-			store.purgeLocked()
-			store.jobs[id] = job
-			store.mu.Unlock()
 
-			go runDiagnoseJob(store, job, q, args.Cluster, budget)
-
-			logrus.WithFields(logrus.Fields{"job_id": id, "budget_seconds": budget}).Info("diagnose: async job started")
-			summary := fmt.Sprintf("started job %s (budget %ds) — poll clickhouse_diagnose_result with this job_id in ~30s", id, budget)
-			data := map[string]any{"job_id": id, "status": "running", "budget_seconds": budget}
+			logrus.WithFields(logrus.Fields{"job_id": job.ID, "budget_seconds": budget}).Info("diagnose: async job started")
+			summary := fmt.Sprintf("started job %s (budget %ds) — poll clickhouse_diagnose_result with this job_id in ~30s", job.ID, budget)
+			data := map[string]any{"job_id": job.ID, "status": "running", "budget_seconds": budget}
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{&mcp.TextContent{Text: summary}},
 			}, data, nil
@@ -174,16 +297,9 @@ budget_seconds: wall-clock budget (default %d, cap %d). Finished results stay po
 			if id == "" {
 				return nil, nil, fmt.Errorf("job_id is required")
 			}
-			store.mu.Lock()
-			store.purgeLocked()
-			job, ok := store.jobs[id]
-			var snapshot diagnoseJob
-			if ok {
-				snapshot = *job
-			}
-			store.mu.Unlock()
+			snapshot, ok := runner.get(id)
 			if !ok {
-				return nil, nil, fmt.Errorf("unknown job %q (finished jobs expire after %d minutes)", id, int(finishedJobTTL.Minutes()))
+				return nil, nil, fmt.Errorf("unknown job %q (finished jobs expire after %d minutes; jobs do not survive a server restart)", id, int(finishedJobTTL.Minutes()))
 			}
 
 			data := map[string]any{
@@ -193,7 +309,7 @@ budget_seconds: wall-clock budget (default %d, cap %d). Finished results stay po
 			var text string
 			switch snapshot.Status {
 			case "running":
-				elapsed := int(time.Since(snapshot.Started).Seconds())
+				elapsed := int(runner.now().Sub(snapshot.Started).Seconds())
 				data["elapsed_seconds"] = elapsed
 				data["model_turns"] = snapshot.Iteration
 				text = fmt.Sprintf("running: %ds elapsed of %ds budget, model turn %d — poll again in ~30s", elapsed, snapshot.Budget, snapshot.Iteration)
@@ -210,42 +326,4 @@ budget_seconds: wall-clock budget (default %d, cap %d). Finished results stay po
 			}, data, nil
 		},
 	)
-}
-
-// runDiagnoseJob executes one async investigation. It runs on its own
-// background context (the originating request has already returned) and
-// records the outcome on the job. A panic is contained to the job.
-func runDiagnoseJob(store *diagnoseJobStore, job *diagnoseJob, question, cluster string, budget int) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(budget)*time.Second+jobRunGrace)
-	defer cancel()
-
-	finish := func(status, answer, errMsg string) {
-		store.mu.Lock()
-		job.Status, job.Answer, job.Err = status, answer, errMsg
-		job.Finished = time.Now()
-		store.mu.Unlock()
-	}
-	defer func() {
-		if r := recover(); r != nil {
-			logrus.WithField("job_id", job.ID).Errorf("diagnose: async job panic: %v", r)
-			finish("error", "", fmt.Sprintf("internal error: %v", r))
-		}
-	}()
-
-	progress := func(iter int32, _ string) {
-		store.mu.Lock()
-		job.Iteration = iter
-		store.mu.Unlock()
-	}
-
-	answer, err := runDiagnosis(ctx, question, cluster, budget, progress)
-	if err != nil {
-		logrus.WithError(err).WithField("job_id", job.ID).Warn("diagnose: async job failed")
-		finish("error", "", err.Error())
-		return
-	}
-	logrus.WithFields(logrus.Fields{
-		"job_id": job.ID, "elapsed": time.Since(job.Started).Seconds(),
-	}).Info("diagnose: async job complete")
-	finish("done", answer, "")
 }

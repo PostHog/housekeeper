@@ -1,7 +1,6 @@
 name: CI
 
 permissions:
-  id-token: write
   contents: read
 
 on:
@@ -21,9 +20,26 @@ jobs:
       matrix:
         go-version: ["1.27"]
 
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:25.3@sha256:b627d7a9bc0e0c1bac26cdbe9d2fc6316faa29c5d8a174f28f5abd57d0fa6ba2
+        env:
+          CLICKHOUSE_PASSWORD: test
+        ports:
+          - 9000:9000
+        options: >-
+          --health-cmd "clickhouse-client --password test --query 'SELECT 1'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      HOUSEKEEPER_TEST_CLICKHOUSE_ADDR: localhost:9000
+      HOUSEKEEPER_TEST_CLICKHOUSE_PASSWORD: test
+
     steps:
       - name: Checkout code
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
@@ -52,6 +68,9 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
 
     steps:
       - name: Check out code
@@ -98,7 +117,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
@@ -108,16 +127,19 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9.2.0
         with:
-          version: latest
+          version: v2.15.0
           args: --timeout=5m
 
   security:
     name: Security Scan
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
@@ -133,3 +155,19 @@ jobs:
         if: always()
         with:
           sarif_file: "trivy-results.sarif"
+
+  vulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...

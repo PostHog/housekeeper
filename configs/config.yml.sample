@@ -1,9 +1,6 @@
-gemini_key: "YOUR_GEMINI_KEY"
 logging:
   level: "info"  # Options: trace, debug, info, warn, error, fatal, panic
   format: "text" # Options: text, json
-slack:
-  webhook_url: "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
 clickhouse:
   host: "127.0.0.1"
   port: 9000
@@ -20,6 +17,16 @@ clickhouse:
   allowed_databases:
     - "system"
     - "models"
+  # As an env var, a comma- or space-separated list:
+  # HOUSEKEEPER_CLICKHOUSE_ALLOWED_DATABASES="system,models"
+  max_result_rows: 10000       # clickhouse_query stops here and reports truncated (negative = no cap)
+  query_timeout_seconds: 90    # per clickhouse_query call; keep below the role's max_execution_time
+  # TLS. The defaults keep the historic behavior: TLS on, certificate not verified.
+  # Set secure: false for a plaintext server (e.g. docker-compose's 9000).
+  secure: true
+  tls_skip_verify: true
+  ca_file: ""                  # PEM CA bundle to verify the server; use with tls_skip_verify: false
+  server_name: ""              # expected certificate name, when it differs from host
 prometheus:
   host: "localhost"
   port: 8481
@@ -27,10 +34,14 @@ prometheus:
   vm_cluster_mode: false  # Set to true for VM cluster mode
   vm_tenant_id: "0"      # Tenant ID for VM cluster mode
   vm_path_prefix: ""     # Optional path prefix (e.g. "prometheus" for VM)
+  query_timeout_seconds: 30
 # HTTP server (enables network-accessible MCP for Kubernetes/remote deployments)
 http:
   addr: ":8080"           # Listen address
   auth_token: ""          # Bearer token clients must present (leave empty to disable auth)
+  session_timeout_seconds: 1800     # idle MCP sessions are closed after this
+  read_header_timeout_seconds: 10
+  shutdown_timeout_seconds: 25      # on SIGTERM, how long to wait for running work before cancelling it
 
 # Optional: deployment-specific guidance for MCP clients.
 # - extra_tool_description: shared facts (topology, clusters, attribution columns,
@@ -52,10 +63,16 @@ bedrock:
   model_id: ""           # Bedrock model or inference-profile id (set per deployment)
   max_tokens: 2048
   max_iterations: 8      # max run_sql round-trips per diagnosis
-  max_seconds: 25        # wall-clock CAP per diagnosis; on exceed, summarize instead of timing out (0 = off)
-  default_seconds: 35    # per-call budget when the caller omits budget_seconds (clamped to max_seconds)
-  async_default_seconds: 120  # default budget for clickhouse_diagnose_async jobs (clamped to max_seconds)
-  max_concurrent_jobs: 3      # concurrent async investigations allowed
+  # Every budget below is clamped to max_seconds. Left unset, max_seconds is 25,
+  # which also caps the two default budgets at 25s.
+  max_seconds: 180       # wall-clock CAP per diagnosis; on exceed, summarize instead of timing out (0 = off)
+  default_seconds: 35    # clickhouse_diagnose budget when the caller omits budget_seconds; fits a ~60s client tool timeout
+  async_default_seconds: 120  # clickhouse_diagnose_async budget when the caller omits budget_seconds
+  max_concurrent_jobs: 3      # concurrent diagnoses allowed, sync and async together
+  # Per run_sql deadline, also bounded by the time left in the budget. The driver
+  # sends deadline + 5s as max_execution_time, so keep this at least 5s below the
+  # analyst profile's max_execution_time.
+  max_query_seconds: 60
   temperature: -1        # < 0 = don't send. Sonnet 5+ rejects the parameter; set >= 0 only for older models
 
 # Optional separate ClickHouse connection used only by the diagnose agent.
@@ -68,3 +85,4 @@ analyst_clickhouse:
   password: ""
   password_file: ""      # same behavior as clickhouse.password_file
   database: ""           # empty = reuse clickhouse.database
+  # secure, tls_skip_verify, ca_file, server_name: unset = follow clickhouse.*

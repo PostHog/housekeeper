@@ -48,8 +48,3 @@ http:
   # and rely on a network-level identity gate (firewall, VPN, Tailscale,
   # authenticating proxy, or localhost binding). See README "Security Notes".
   auth_token: ""
-
-# Optional — only used in --analyze mode (not the HTTP MCP server).
-# gemini_key: "..."
-# slack:
-#   webhook_url: "..."

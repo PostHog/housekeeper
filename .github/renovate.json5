@@ -35,6 +35,19 @@
       "minimumReleaseAge": "3 days"
     },
     {
+      // These two change their APIs in minor releases, so each gets a PR of its own and a break does not hold back the rest.
+      "matchManagers": ["gomod"],
+      "matchPackageNames": ["github.com/ClickHouse/clickhouse-go/**", "github.com/ClickHouse/ch-go"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "clickhouse-go"
+    },
+    {
+      "matchManagers": ["gomod"],
+      "matchPackageNames": ["github.com/prometheus/**"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "prometheus modules"
+    },
+    {
       // The go line sets the GODEBUG defaults, so it moves only by a deliberate change.
       "matchDatasources": ["golang-version"],
       "enabled": false

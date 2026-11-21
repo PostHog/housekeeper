@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"math"
@@ -335,7 +336,8 @@ func sessionLoggingMiddleware(next http.Handler) http.Handler {
 func bearerAuthMiddleware(token string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
-		if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != token {
+		presented, ok := strings.CutPrefix(auth, "Bearer ")
+		if !ok || subtle.ConstantTimeCompare([]byte(presented), []byte(token)) != 1 {
 			logrus.WithFields(logrus.Fields{
 				"remote_addr": r.RemoteAddr,
 				"path":        r.URL.Path,

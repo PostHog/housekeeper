@@ -29,7 +29,7 @@ func connect() (driver.Conn, error) {
 				Name    string
 				Version string
 			}{
-				{Name: "gemini-go-clickhouse", Version: "0.1"},
+				{Name: "housekeeper", Version: "0.1"},
 			},
 		},
 	})

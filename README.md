@@ -68,6 +68,8 @@ Query ClickHouse tables from allowed databases with two modes:
 - **Structured**: Specify table, columns, filters, ordering, and limits
 - **Free-form SQL**: Write custom queries (restricted to allowed databases)
 
+Both modes go through the same validator: one SELECT/WITH statement, table references only as `db.table` in an allowed database or `clusterAllReplicas(cluster, db.table)`, and no table functions, comma joins, comments, backtick identifiers, `SETTINGS`, `FORMAT` or `INTO OUTFILE`. Results stop at `clickhouse.max_result_rows` (default 10000) with `truncated: true`, and each call is bounded by `clickhouse.query_timeout_seconds`.
+
 Example questions you can ask Claude:
 - "Show me the slowest queries from the last hour"
 - "What tables are using the most disk space?"
@@ -76,7 +78,8 @@ Example questions you can ask Claude:
 
 ### `prometheus_query`
 Execute PromQL queries for metrics analysis:
-- Range queries with customizable time windows
+- Range queries with customizable time windows (`start` defaults to an hour before `end`, `step` to the window / 50)
+- Capped at 11000 points per series, 500 series and 10000 raw samples (`truncated: true` when cut)
 - Support for Victoria Metrics cluster mode
 
 Example requests:
@@ -85,7 +88,7 @@ Example requests:
 - "Find nodes with high CPU usage"
 
 ### `clickhouse_diagnose` (optional)
-Ask a natural-language question ("why is X slow", "what's driving load") and a server-side Bedrock agent investigates via a guarded `run_sql` tool on a separate, elevated ClickHouse connection, returning only an attributed summary. Registered when `bedrock.region` + `bedrock.model_id` are set; credentials come from the default AWS chain. Bounded by `bedrock.max_iterations` round-trips and a wall-clock budget: callers pass `budget_seconds` (default `bedrock.default_seconds`, capped at `bedrock.max_seconds`), and when it runs out the agent summarizes what it found. Make sure your MCP client's tool timeout exceeds the budget. See [MCP.md](./MCP.md) for details.
+Ask a natural-language question ("why is X slow", "what's driving load") and a server-side Bedrock agent investigates via a guarded `run_sql` tool on a separate, elevated ClickHouse connection, returning only an attributed summary. Registered when `bedrock.region` + `bedrock.model_id` are set; credentials come from the default AWS chain. Bounded by `bedrock.max_iterations` round-trips and a wall-clock budget: callers pass `budget_seconds` (default `bedrock.default_seconds`, capped at `bedrock.max_seconds`), and when it runs out the agent summarizes what it found. Each `run_sql` query gets its own deadline, `bedrock.max_query_seconds` (default 60) or the time left, whichever is less. Query results reach the model wrapped as untrusted data. Make sure your MCP client's tool timeout exceeds the budget. See [MCP.md](./MCP.md) for details.
 
 ### `clickhouse_diagnose_async` / `clickhouse_diagnose_result` (optional)
 The same investigation as a background job, for questions that need longer than your client's tool timeout. `clickhouse_diagnose_async` returns a `job_id` straight away (budget defaults to `bedrock.async_default_seconds`, capped at `bedrock.max_seconds`); poll `clickhouse_diagnose_result` with it every ~30s. At most `bedrock.max_concurrent_jobs` run at once, and finished results stay available for 30 minutes. Registered alongside `clickhouse_diagnose`.
@@ -208,6 +211,8 @@ prometheus:
 
 - **Read-Only**: SELECT-only at the SQL layer; DDL and writes are blocked. Server-side role/profile is the real boundary.
 - **Authentication**: Set `--http-auth-token` (or `HOUSEKEEPER_HTTP_AUTH_TOKEN`) for bearer auth, or leave unset and front housekeeper with a network-level identity gate.
+- **Limits**: give the ClickHouse users a profile that caps `max_execution_time`, `max_memory_usage` and `max_bytes_to_read` with a `max` and `<disallowed>0</disallowed>`. With `readonly=2` a query can change settings, and 0 lifts the limit.
+- **TLS**: `clickhouse.secure` (default true) and `clickhouse.tls_skip_verify` (default true, the historic behavior). Set `ca_file` and `tls_skip_verify: false` to verify the server.
 - **Credentials**: `configs/config*.yml` are gitignored. Only `*.example`/`*.sample` templates are tracked.
 
 ---

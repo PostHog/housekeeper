@@ -167,10 +167,12 @@ func maxResultRows() int {
 	return n
 }
 
-func runClickhouseQuery(a queryArgs) ([]map[string]interface{}, error) {
+// runClickhouseQuery runs a validated query and returns at most
+// clickhouse.max_result_rows rows. truncated reports whether more were available.
+func runClickhouseQuery(ctx context.Context, a queryArgs) (results []map[string]interface{}, truncated bool, err error) {
 	conn, err := connect()
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer func() {
 		if err := conn.Close(); err != nil {
@@ -183,14 +185,14 @@ func runClickhouseQuery(a queryArgs) ([]map[string]interface{}, error) {
 		query = buildStructuredQuery(a)
 	}
 
-	results, truncated, err := queryRowsCapped(context.Background(), conn, query, maxResultRows())
+	results, truncated, err = queryRowsCapped(ctx, conn, query, maxResultRows())
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if truncated {
 		logrus.WithField("max_rows", len(results)).Warn("clickhouse_query result truncated at max_result_rows")
 	}
-	return results, nil
+	return results, truncated, nil
 }
 
 // queryRowsCapped runs query and returns at most maxRows rows (maxRows <= 0 means

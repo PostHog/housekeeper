@@ -75,13 +75,18 @@ system.* tables are per-node (wrap them yourself in sql mode); replicated tables
 			if err := validateQueryArgs(qa); err != nil {
 				return nil, nil, err
 			}
-			rows, err := runClickhouseQuery(qa)
+			ctx, cancel := withToolTimeout(ctx, "clickhouse.query_timeout_seconds")
+			defer cancel()
+			rows, truncated, err := runClickhouseQuery(ctx, qa)
 			if err != nil {
 				return nil, nil, err
 			}
-			data := map[string]any{"results": rows, "count": len(rows)}
+			data := map[string]any{"results": rows, "count": len(rows), "truncated": truncated}
 			// Produce a concise, useful text summary for the LLM/UI
 			summary := summarizeRows(rows)
+			if truncated {
+				summary += fmt.Sprintf("\n(truncated at %d rows; add aggregation, filters or LIMIT)", len(rows))
+			}
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{&mcp.TextContent{Text: summary}},
 			}, data, nil

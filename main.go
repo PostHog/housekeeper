@@ -51,10 +51,10 @@ func main() {
 	_ = viper.BindPFlag("http.addr", pflag.Lookup("http-addr"))
 	_ = viper.BindPFlag("http.auth_token", pflag.Lookup("http-auth-token"))
 
-	// Try to load config file if provided, but don't fail if it doesn't exist
-	// Command-line flags will provide the values
+	// With no config file, flags, env vars and defaults provide the values. An
+	// explicit path that can't be read, or a file that won't parse, is fatal.
 	if err := loadConfig(*configPath); err != nil {
-		logrus.WithError(err).Debug("Config file not found, using command-line flags")
+		logrus.WithError(err).Fatal("Failed to load config")
 	}
 	logrus.Info("Starting MCP server")
 	if err := RunMCPServer(); err != nil {

@@ -103,7 +103,8 @@ The server uses the official go-sdk and serves MCP over HTTP using the streamabl
 - Description: Query ClickHouse tables (read‑only) from configured allowed databases.
 - Arguments (two modes):
   - Structured: `table` (required, must be from allowed databases), `columns`[], `where`, `order_by`, `limit`.
-  - Free-form: `sql` (string) — must be a single SELECT/WITH statement referencing only tables from allowed databases. Semicolons and write/DDL are rejected.
+  - Free-form: `sql` (string) — must be a single SELECT/WITH statement referencing only tables from allowed databases. Semicolons, write/DDL, table functions, comma joins, comments, backtick identifiers, `SETTINGS`, `FORMAT` and `INTO OUTFILE` are rejected. Structured queries are built and then run through the same check.
+- Limits: at most `clickhouse.max_result_rows` rows (default 10000; the result carries `truncated: true` when cut), and `clickhouse.query_timeout_seconds` (default 90) per call.
 - Allowed databases: Configured via `--ch-allowed-databases` flag or `clickhouse.allowed_databases` in config (defaults to ["system"])
 
 **IMPORTANT Usage Guidelines:**
@@ -117,9 +118,10 @@ The server uses the official go-sdk and serves MCP over HTTP using the streamabl
 - Description: Execute PromQL queries against Prometheus metrics.
 - Arguments:
   - `query` (required): PromQL query string
-  - `start` (optional): Start time in RFC3339 format or relative time (e.g. "-1h")
-  - `end` (optional): End time in RFC3339 format or relative time (e.g. "-1h")
-  - `step` (optional): Step duration (e.g. "15s", "1m", "1h") (default: "1m")
+  - `start` (optional): Start time in RFC3339 format or relative time (e.g. "-1h"); defaults to an hour before `end`
+  - `end` (optional): End time in RFC3339 format or relative time (e.g. "-1h"); defaults to now
+  - `step` (optional): Step duration (e.g. "15s", "1m", "1h"); defaults to the window / 50, at least 15s. A step ≤ 0, or one that gives more than 11000 points, is rejected.
+- Results are capped at 500 series and 10000 raw samples, with `truncated` and `series_total` in the result. Each call is bounded by `prometheus.query_timeout_seconds` (default 30).
 
 ### Tool: clickhouse_diagnose (optional)
 
@@ -132,9 +134,9 @@ The server uses the official go-sdk and serves MCP over HTTP using the streamabl
 ### Tool: clickhouse_diagnose_async / clickhouse_diagnose_result (optional)
 
 - Registered together with `clickhouse_diagnose`.
-- `clickhouse_diagnose_async` takes the same arguments and returns a `job_id` immediately. Its `budget_seconds` defaults to `bedrock.async_default_seconds`, clamped to `bedrock.max_seconds`. At most `bedrock.max_concurrent_jobs` jobs run at once; further starts are rejected until one finishes.
+- `clickhouse_diagnose_async` takes the same arguments and returns a `job_id` immediately. Its `budget_seconds` defaults to `bedrock.async_default_seconds`, clamped to `bedrock.max_seconds`. At most `bedrock.max_concurrent_jobs` diagnoses run at once, sync and async together; further starts are rejected until one finishes.
 - `clickhouse_diagnose_result` takes `job_id` and returns `running` (elapsed seconds, model turn), `done` (the answer) or `error`. Poll every ~30s. Finished jobs expire after 30 minutes.
-- Jobs live in server memory, so a restart (or a different replica behind a load balancer) loses them.
+- Jobs live in server memory, so a restart (or a different replica behind a load balancer) loses them. On SIGTERM the server waits up to `http.shutdown_timeout_seconds` (default 25) for running jobs, then cancels them.
 
 ### Diagnose budget keys
 
@@ -144,7 +146,8 @@ The server uses the official go-sdk and serves MCP over HTTP using the streamabl
 | `bedrock.max_seconds` | 25 | Wall-clock cap; every `budget_seconds` is clamped to it (0 = no cap) |
 | `bedrock.default_seconds` | 35 | `clickhouse_diagnose` budget when `budget_seconds` is omitted |
 | `bedrock.async_default_seconds` | 120 | `clickhouse_diagnose_async` budget when `budget_seconds` is omitted |
-| `bedrock.max_concurrent_jobs` | 3 | Concurrent async jobs |
+| `bedrock.max_concurrent_jobs` | 3 | Concurrent diagnoses, sync and async together |
+| `bedrock.max_query_seconds` | 60 | Deadline per `run_sql` query, also bounded by the time left. The driver sends it + 5s as `max_execution_time`, so keep it at least 5s below the analyst profile's cap |
 
 With the defaults, both default budgets are clamped to the 25s cap; raise `bedrock.max_seconds` to allow longer investigations.
 

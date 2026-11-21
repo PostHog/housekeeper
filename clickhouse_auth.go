@@ -23,7 +23,7 @@ const connectPingTimeout = 15 * time.Second
 
 // clickhousePassword returns the password for a new ClickHouse connection.
 // passwordFile, when set, holds a short-lived token (a projected ServiceAccount
-// token validated by ch-podauth) that the kubelet rewrites before it expires, so
+// token checked by a token-validating auth proxy) that the kubelet rewrites before it expires, so
 // it is read on every connect. An unreadable or empty file uses the static
 // password. An expired token also uses it, but only when one is set.
 func clickhousePassword(passwordFile, password string) string {

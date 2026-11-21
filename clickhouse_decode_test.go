@@ -31,7 +31,11 @@ func TestDecodeSimpleAggregateFunctionLowCardinality(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	defer conn.Close()
+	defer func() {
+		if err := conn.Close(); err != nil {
+			t.Logf("close connection: %v", err)
+		}
+	}()
 
 	ctx := context.Background()
 	if err := conn.Exec(ctx, "CREATE TEMPORARY TABLE saf_lc (k UInt8, u SimpleAggregateFunction(max, LowCardinality(String))) ENGINE = Memory"); err != nil {
@@ -45,7 +49,11 @@ func TestDecodeSimpleAggregateFunctionLowCardinality(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query: %v", err)
 	}
-	defer rows.Close()
+	defer func() {
+		if err := rows.Close(); err != nil {
+			t.Logf("close rows: %v", err)
+		}
+	}()
 
 	got := map[string]uint64{}
 	for rows.Next() {

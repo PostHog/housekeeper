@@ -44,6 +44,19 @@ func loadConfig(explicitPath string) error {
 
 	viper.SetDefault("http.addr", ":8080")
 	viper.SetDefault("http.auth_token", "")
+	// MCP sessions with no requests for this long are closed (0 = never).
+	viper.SetDefault("http.session_timeout_seconds", 1800)
+	viper.SetDefault("http.read_header_timeout_seconds", 10)
+	// On SIGTERM/SIGINT, how long to wait for in-flight requests and async
+	// diagnoses before cancelling them. Keep below the pod's termination grace.
+	viper.SetDefault("http.shutdown_timeout_seconds", 25)
+
+	// Per-call timeouts for clickhouse_query and prometheus_query (0 = none).
+	// The ClickHouse driver sends max_execution_time = timeout + 5, so keep
+	// clickhouse.query_timeout_seconds at or below the restricted profile's
+	// max_execution_time constraint minus 5.
+	viper.SetDefault("clickhouse.query_timeout_seconds", 90)
+	viper.SetDefault("prometheus.query_timeout_seconds", 30)
 
 	// Deployment-specific guidance. extra_tool_description is shared facts
 	// appended to BOTH clickhouse_query and the diagnose agent (topology,

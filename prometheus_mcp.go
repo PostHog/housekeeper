@@ -59,13 +59,12 @@ func initPrometheus() error {
 	return nil
 }
 
-func queryPrometheus(endpoint, query string, start, end time.Time, step time.Duration) (interface{}, error) {
+func queryPrometheus(ctx context.Context, endpoint, query string, start, end time.Time, step time.Duration) (interface{}, error) {
 	client, ok := promClients[endpoint]
 	if !ok {
 		return nil, fmt.Errorf("prometheus endpoint %q not configured", endpoint)
 	}
 
-	ctx := context.Background()
 	r := v1.Range{Start: start, End: end, Step: step}
 
 	result, _, err := client.QueryRange(ctx, query, r)

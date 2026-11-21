@@ -2,12 +2,17 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
+	"os"
+	"os/signal"
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -91,14 +96,15 @@ step: Go duration ("30s", "1m"). Pick one that yields <~50 points over the windo
 	// Optional: in-account, Bedrock-backed agentic diagnosis tool. Only exposed
 	// when bedrock.region + bedrock.model_id are configured. Runs server-side
 	// with the analyst connection and returns only a summary.
+	var runner *diagnoseRunner
 	if bedrockEnabled() {
-		runner := newDiagnoseRunner(viper.GetInt("bedrock.max_concurrent_jobs"), runDiagnosis)
+		runner = newDiagnoseRunner(viper.GetInt("bedrock.max_concurrent_jobs"), runDiagnosis)
 		registerDiagnoseTool(srv, runner)
 		registerDiagnoseAsyncTools(srv, runner)
 		logrus.Info("diagnose tools enabled (Bedrock in-account analysis, sync + async)")
 	}
 
-	return runHTTPMCPServer(srv)
+	return runHTTPMCPServer(srv, runner)
 }
 
 // queryInputSchema returns the clickhouse_query input schema, inferred from queryArgs.
@@ -136,7 +142,9 @@ func registerPrometheusTool(srv *mcp.Server, name, title, description, endpoint 
 				return nil, nil, fmt.Errorf("invalid step duration: %v", err)
 			}
 
-			result, err := queryPrometheus(endpoint, pa.Query, start, end, step)
+			ctx, cancel := withToolTimeout(ctx, "prometheus.query_timeout_seconds")
+			defer cancel()
+			result, err := queryPrometheus(ctx, endpoint, pa.Query, start, end, step)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -169,12 +177,33 @@ func registerPrometheusTool(srv *mcp.Server, name, title, description, endpoint 
 	)
 }
 
-// runHTTPMCPServer starts the MCP server over HTTP using the streamable HTTP transport.
-func runHTTPMCPServer(srv *mcp.Server) error {
+// withToolTimeout bounds a tool call by the timeout in seconds at configKey.
+// A value <= 0 leaves ctx unbounded. The ClickHouse driver derives
+// max_execution_time (timeout + 5s) from the deadline, so a ClickHouse timeout
+// must stay at or below the profile's max_execution_time constraint minus 5.
+func withToolTimeout(ctx context.Context, configKey string) (context.Context, context.CancelFunc) {
+	if s := viper.GetInt(configKey); s > 0 {
+		return context.WithTimeout(ctx, time.Duration(s)*time.Second)
+	}
+	return context.WithCancel(ctx)
+}
+
+func secondsSetting(key string) time.Duration {
+	return time.Duration(viper.GetInt(key)) * time.Second
+}
+
+// runHTTPMCPServer serves MCP over HTTP until SIGTERM or SIGINT, then shuts
+// down gracefully: it stops accepting connections and waits, up to
+// http.shutdown_timeout_seconds, for in-flight requests and async diagnoses.
+func runHTTPMCPServer(srv *mcp.Server, runner *diagnoseRunner) error {
 	addr := viper.GetString("http.addr")
 	authToken := viper.GetString("http.auth_token")
 
-	handler := newHTTPHandler(srv, authToken)
+	httpSrv := &http.Server{
+		Addr:              addr,
+		Handler:           newHTTPHandler(srv, authToken, secondsSetting("http.session_timeout_seconds")),
+		ReadHeaderTimeout: secondsSetting("http.read_header_timeout_seconds"),
+	}
 
 	logrus.WithFields(logrus.Fields{
 		"addr":       addr,
@@ -183,11 +212,50 @@ func runHTTPMCPServer(srv *mcp.Server) error {
 		"auth":       authToken != "",
 	}).Info("MCP server ready")
 
-	return http.ListenAndServe(addr, handler)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+	defer stop()
+	return serveUntilDone(ctx, httpSrv, runner, secondsSetting("http.shutdown_timeout_seconds"))
+}
+
+// serveUntilDone runs httpSrv until ctx is done, then shuts it and the
+// diagnose runner down within shutdownTimeout.
+func serveUntilDone(ctx context.Context, httpSrv *http.Server, runner *diagnoseRunner, shutdownTimeout time.Duration) error {
+	errc := make(chan error, 1)
+	go func() { errc <- httpSrv.ListenAndServe() }()
+
+	select {
+	case err := <-errc:
+		return err
+	case <-ctx.Done():
+	}
+	logrus.WithField("timeout", shutdownTimeout).Info("shutting down: no new connections; waiting for in-flight work")
+
+	sctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	var wg sync.WaitGroup
+	if runner != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			runner.shutdown(sctx)
+		}()
+	}
+	if err := httpSrv.Shutdown(sctx); err != nil {
+		// Long-lived streams (e.g. an idle SSE GET) outlast the wait.
+		logrus.WithError(err).Warn("shutdown wait ended; closing remaining connections")
+		_ = httpSrv.Close()
+	}
+	wg.Wait()
+	if err := <-errc; err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	logrus.Info("shutdown complete")
+	return nil
 }
 
 // newHTTPHandler returns the routes of the HTTP server, wrapped in its middleware.
-func newHTTPHandler(srv *mcp.Server, authToken string) http.Handler {
+// MCP sessions idle for sessionTimeout are closed (0 = never).
+func newHTTPHandler(srv *mcp.Server, authToken string, sessionTimeout time.Duration) http.Handler {
 	mux := http.NewServeMux()
 
 	// Health check — no auth required; used by k8s probes and connectivity tests.
@@ -197,18 +265,23 @@ func newHTTPHandler(srv *mcp.Server, authToken string) http.Handler {
 		_, _ = w.Write([]byte("ok\n"))
 	})
 
-	// MCP streamable HTTP transport (2025-03-26 spec).
+	// MCP streamable HTTP transport.
 	// Client sends POST / with Accept: application/json, text/event-stream
 	streamHandler := sessionLoggingMiddleware(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
 		return srv
-	}, nil))
+	}, &mcp.StreamableHTTPOptions{
+		SessionTimeout: sessionTimeout,
+		// Cancel a tool call when its HTTP request ends (clients on protocol
+		// 2026-07-28 or later; older clients cancel with notifications/cancelled).
+		PropagateRequestCancellation: true,
+	}))
 
 	if authToken != "" {
 		mux.Handle("/", bearerAuthMiddleware(authToken, streamHandler))
 		logrus.Info("HTTP authentication enabled (bearer token)")
 	} else {
 		mux.Handle("/", streamHandler)
-		logrus.Info("HTTP authentication disabled (no auth_token configured)")
+		logrus.Warn("HTTP authentication disabled (no auth_token configured)")
 	}
 
 	// Reject cross-origin requests from browsers. Clients that are not browsers send

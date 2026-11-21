@@ -10,11 +10,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **clickhouse_query** — read-only queries (structured fields or free-form single SELECT/WITH), restricted to `clickhouse.allowed_databases`. Free-form SQL goes through the validator in `clickhouse_mcp.go` (allowlist of table refs, forbidden keywords, quote/whitespace normalization).
 - **prometheus_query** — PromQL range queries against the main Prometheus/VM endpoint.
-- **clickhouse_diagnose** — only registered when `bedrock.region` + `bedrock.model_id` are set. Runs a server-side Bedrock Converse tool-use loop (`bedrock.go`) with a single `run_sql` tool against the elevated `analyst_clickhouse.*` connection, bounded by `bedrock.max_iterations` and `bedrock.max_seconds`, and returns only a text summary. The system prompt lives in `diagnose_mcp.go`; deployment-specific context is appended from `mcp.extra_tool_description`.
-
-### Analysis Mode (legacy, optional)
-
-With `--analyze`, runs a one-shot Gemini-based error analysis (`agent.go`, `slack.go`, `clickhouse.go`) and posts to Slack. Legacy; not used in MCP server deployments.
+- **clickhouse_diagnose** — only registered when `bedrock.region` + `bedrock.model_id` are set. Runs a server-side Bedrock Converse tool-use loop (`bedrock.go`) with a single `run_sql` tool against the elevated `analyst_clickhouse.*` connection, bounded by `bedrock.max_iterations` and `bedrock.max_seconds`, and returns only a text summary. The system prompt lives in `diagnose_mcp.go`; deployment-specific context is appended from `mcp.extra_tool_description`. Callers pass `budget_seconds` (default `bedrock.default_seconds`, clamped to `bedrock.max_seconds`).
+- **clickhouse_diagnose_async / clickhouse_diagnose_result** — registered with clickhouse_diagnose (`diagnose_async_mcp.go`). Start a background investigation that returns a job id, then poll for the answer. Jobs live in an in-memory store (finished results kept 30 min), budget defaults to `bedrock.async_default_seconds`, concurrency capped by `bedrock.max_concurrent_jobs`.
 
 ## Development Commands
 
@@ -22,8 +19,9 @@ With `--analyze`, runs a one-shot Gemini-based error analysis (`agent.go`, `slac
 go run .                          # MCP server (default)
 go run . --config configs/config.yml
 go build -o housekeeper
-go test ./...                     # tests exist: validator, query building, prometheus parsing
+go test ./...                     # validator, query building, prometheus parsing, auth; decode test needs a live server
 gofmt -s -w . && go vet ./...
+golangci-lint run                 # CI runs v2 with .golangci.yml (standard linters + gofmt)
 docker-compose up -d              # local ClickHouse
 ```
 
@@ -31,14 +29,15 @@ docker-compose up -d              # local ClickHouse
 
 ### Core files
 
-1. **main.go** — entry point, pflag definitions, mode selection
+1. **main.go** — entry point, pflag definitions, starts the MCP server
 2. **sdk_mcp.go** — MCP server (go-sdk), tool registration, tool descriptions, HTTP transport + auth/CORS/logging middleware, row summarization
 3. **clickhouse_mcp.go** — query args validation, free-form SQL validator, query building/execution, value normalization
-4. **prometheus_mcp.go** — Prometheus/VM clients (default + optional clickhouse endpoint), time-range validation
-5. **diagnose_mcp.go** — clickhouse_diagnose tool, analyst connection, diagnose system prompt
+4. **prometheus_mcp.go** — Prometheus/VM client, time-range validation
+5. **diagnose_mcp.go** — clickhouse_diagnose tool, analyst connection, diagnose system prompt, budget resolution
+   **diagnose_async_mcp.go** — clickhouse_diagnose_async / clickhouse_diagnose_result and the in-memory job store
 6. **bedrock.go** — Bedrock client (default AWS credential chain), Converse tool-use loop with iteration + wall-clock budgets
 7. **config.go** — Viper config: defaults, `HOUSEKEEPER_*` env vars (dots → underscores), config file search paths
-8. **clickhouse.go / agent.go / slack.go** — legacy `--analyze` mode (Gemini + Slack)
+8. **clickhouse.go** — `connect()`, the ClickHouse connection used by clickhouse_query
 9. **clickhouse_auth.go** — ClickHouse password resolution shared by every connection: the `password_file` token with a static-password fallback
 
 ### Configuration
@@ -49,7 +48,7 @@ Priority: CLI flags > env vars > config file > defaults. Notable keys beyond con
 - `mcp.query_extra_description` — appended ONLY to clickhouse_query (restricted-role caveats the elevated diagnose agent must not see)
 - `bedrock.*` — enables clickhouse_diagnose (region + model_id), budgets, temperature
 - `analyst_clickhouse.*` — elevated connection for the diagnose agent; falls back to `clickhouse.*` when unset
-- `clickhouse.password_file` / `analyst_clickhouse.password_file` — a rotating token (a projected ServiceAccount token validated by ch-podauth), re-read on every connect by `clickhousePassword` in `clickhouse_auth.go`. An unreadable or empty file uses the static `password`, and so does an expired token when a `password` is set
+- `clickhouse.password_file` / `analyst_clickhouse.password_file` — a rotating token (a projected ServiceAccount token, checked by a token-validating auth proxy), re-read on every connect by `clickhousePassword` in `clickhouse_auth.go`. An unreadable or empty file uses the static `password`, and so does an expired token when a `password` is set
 
 ### Deployment
 
@@ -57,8 +56,8 @@ The server is deployment-agnostic: everything operator-facing is set via flags, 
 
 ## Important Notes
 
-1. **MCP is the default mode** — `--analyze` is legacy and unused in k8s.
+1. **MCP server only** — the old Gemini/Slack `--analyze` mode has been removed.
 2. **Security boundary is server-side** — the SQL validator is defense-in-depth; the ClickHouse role/profile (grants, column REVOKEs) is the real boundary. Keep both in mind when changing the validator.
 3. **Tool descriptions are product surface** — most operator-facing behavior is prompt text supplied via the `mcp.extra_tool_description` / `mcp.query_extra_description` config keys, not Go code. Check deployment config first for instruction changes.
 4. **Config security** — `configs/config*.yml` are gitignored; only `*.sample`/`*.example` are tracked.
-5. **Tests** — table-driven tests in `clickhouse_mcp_test.go`, `clickhouse_test.go`, `prometheus_mcp_test.go`, `clickhouse_auth_test.go`, plus `clickhouse_decode_test.go`, which decodes driver column types against a live server (skipped unless `HOUSEKEEPER_TEST_CLICKHOUSE_ADDR` is set). Extend them when touching the validator; bypasses have happened (multiline whitespace).
+5. **Tests** — table-driven tests in `clickhouse_mcp_test.go`, `clickhouse_test.go`, `prometheus_mcp_test.go`, `clickhouse_auth_test.go`, `sdk_mcp_test.go`, plus `clickhouse_decode_test.go`, which decodes driver column types against a live server (skipped unless `HOUSEKEEPER_TEST_CLICKHOUSE_ADDR` is set; CI sets it with a ClickHouse service container). Extend them when touching the validator; bypasses have happened (multiline whitespace).

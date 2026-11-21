@@ -8,7 +8,7 @@ Housekeeper runs as an HTTP MCP server, providing AI assistants like Claude with
 
 - **ClickHouse Queries**: Read-only access to configurable databases (defaults to `system.*` tables)
 - **Prometheus/Victoria Metrics**: Execute PromQL queries for metrics correlation and analysis
-- **In-account diagnosis (optional)**: A Bedrock-backed `clickhouse_diagnose` tool that investigates server-side on an elevated connection and returns only a summary
+- **In-account diagnosis (optional)**: Bedrock-backed `clickhouse_diagnose` tools (synchronous, or async start/poll) that investigate server-side on an elevated connection and return only a summary
 - **Smart Cluster Querying**: Automatic use of `clusterAllReplicas()` for system tables only (non-system tables are queried directly)
 
 ---
@@ -19,17 +19,23 @@ Housekeeper runs as an HTTP server. Connect Claude Desktop to it via [mcp-remote
 
 ### 1. Start Housekeeper
 
+No public image is published (CI builds images for internal deployments), so build one locally first:
+
 ```bash
+docker build -t housekeeper .
+
 # With a config file (recommended — see configs/config.yml.sample)
 docker run -p 8080:8080 \
   -v $(pwd)/configs/config.yml:/etc/housekeeper/config.yml \
-  ghcr.io/posthog/housekeeper:latest
+  housekeeper --config /etc/housekeeper/config.yml
 
 # Or with flags
-docker run -p 8080:8080 ghcr.io/posthog/housekeeper:latest \
+docker run -p 8080:8080 housekeeper \
   --ch-host your-clickhouse-host \
   --ch-password your-password
 ```
+
+Or skip Docker: `go install github.com/PostHog/housekeeper@latest`.
 
 ### 2. Configure Claude Desktop
 
@@ -79,7 +85,10 @@ Example requests:
 - "Find nodes with high CPU usage"
 
 ### `clickhouse_diagnose` (optional)
-Ask a natural-language question ("why is X slow", "what's driving load") and a server-side Bedrock agent investigates via a guarded `run_sql` tool on a separate, elevated ClickHouse connection, returning only an attributed summary. Registered when `bedrock.region` + `bedrock.model_id` are set; credentials come from the default AWS chain. Bounded by `bedrock.max_iterations` / `bedrock.max_seconds` — make sure your MCP client's tool timeout exceeds the latter. See [MCP.md](./MCP.md) for details.
+Ask a natural-language question ("why is X slow", "what's driving load") and a server-side Bedrock agent investigates via a guarded `run_sql` tool on a separate, elevated ClickHouse connection, returning only an attributed summary. Registered when `bedrock.region` + `bedrock.model_id` are set; credentials come from the default AWS chain. Bounded by `bedrock.max_iterations` round-trips and a wall-clock budget: callers pass `budget_seconds` (default `bedrock.default_seconds`, capped at `bedrock.max_seconds`), and when it runs out the agent summarizes what it found. Make sure your MCP client's tool timeout exceeds the budget. See [MCP.md](./MCP.md) for details.
+
+### `clickhouse_diagnose_async` / `clickhouse_diagnose_result` (optional)
+The same investigation as a background job, for questions that need longer than your client's tool timeout. `clickhouse_diagnose_async` returns a `job_id` straight away (budget defaults to `bedrock.async_default_seconds`, capped at `bedrock.max_seconds`); poll `clickhouse_diagnose_result` with it every ~30s. At most `bedrock.max_concurrent_jobs` run at once, and finished results stay available for 30 minutes. Registered alongside `clickhouse_diagnose`.
 
 ---
 
@@ -149,7 +158,21 @@ http:
   auth_token: "your-secret-token"
 ```
 
-See [`configs/config.yml.sample`](configs/config.yml.sample) for the full set of options, including `logging` and the optional `mcp.extra_tool_description`.
+See [`configs/config.yml.sample`](configs/config.yml.sample) for the full set of options, including `logging`, the optional `mcp.extra_tool_description`, the `bedrock.*` diagnose settings and the `analyst_clickhouse.*` connection.
+
+#### Rotating password file
+`clickhouse.password_file` (and `analyst_clickhouse.password_file`) names a file holding a rotating token, such as a projected Kubernetes ServiceAccount token. It is re-read on every connect, so rotation needs no restart. An unreadable or empty file falls back to the static `password`, and so does an expired token when a `password` is set.
+
+#### Diagnose budgets
+| Key | Default | Meaning |
+|---|---|---|
+| `bedrock.max_iterations` | 8 | `run_sql` round-trips per diagnosis |
+| `bedrock.max_seconds` | 25 | Wall-clock cap for any diagnosis; every `budget_seconds` is clamped to it (0 = no cap) |
+| `bedrock.default_seconds` | 35 | `clickhouse_diagnose` budget when the caller omits `budget_seconds` |
+| `bedrock.async_default_seconds` | 120 | `clickhouse_diagnose_async` budget when the caller omits `budget_seconds` |
+| `bedrock.max_concurrent_jobs` | 3 | Async investigations allowed at once |
+
+The defaults clamp both default budgets to the 25s cap. Raise `bedrock.max_seconds` to use longer budgets.
 
 Then run:
 ```bash
@@ -181,29 +204,6 @@ prometheus:
   port: 8481
 ```
 
-## 📊 Analysis Mode (Optional)
-
-Housekeeper also includes an AI-powered analysis mode for automated monitoring and alerting:
-
-```bash
-docker run housekeeper --analyze
-docker run housekeeper --analyze --performance
-```
-
-This mode:
-- Queries recent errors from ClickHouse
-- Analyzes patterns using Google Gemini AI
-- Generates Slack-ready summaries
-- Requires `gemini_key` in config
-
-```yaml
-gemini_key: "your-gemini-api-key"
-clickhouse:
-  # ... same as above
-```
-
----
-
 ## 🔒 Security Notes
 
 - **Read-Only**: SELECT-only at the SQL layer; DDL and writes are blocked. Server-side role/profile is the real boundary.
@@ -221,12 +221,12 @@ clickhouse:
 ├── clickhouse_mcp.go        # ClickHouse query validation and execution
 ├── prometheus_mcp.go        # Prometheus/Victoria Metrics client
 ├── diagnose_mcp.go          # clickhouse_diagnose tool + analyst connection
-├── bedrock.go               # Bedrock Converse tool-use loop (IRSA credentials)
-├── clickhouse.go            # ClickHouse connection (analysis mode)
-├── agent.go                 # Gemini AI integration (analysis mode)
-├── slack.go                 # Slack notifications (analysis mode)
+├── diagnose_async_mcp.go    # clickhouse_diagnose_async / _result job tools
+├── bedrock.go               # Bedrock Converse tool-use loop (default AWS credential chain)
+├── clickhouse.go            # ClickHouse connection for clickhouse_query
+├── clickhouse_auth.go       # Password resolution (rotating password_file + static fallback)
 ├── config.go                # Config loading and logging setup
-├── *_test.go                # Table-driven tests (SQL validator, query building, prometheus)
+├── *_test.go                # Tests (SQL validator, query building, prometheus, auth, driver decode)
 ├── Dockerfile               # Multi-stage build → distroless runtime
 ├── docker-compose.yml       # Local ClickHouse for development
 └── configs/

@@ -70,8 +70,9 @@ func loadConfig(explicitPath string) error {
 	// larger timeouts opt up per call, clamped to max_seconds.
 	viper.SetDefault("bedrock.default_seconds", 35)
 	// Async jobs (clickhouse_diagnose_async): default budget when the caller
-	// doesn't pass budget_seconds (clamped to max_seconds), and how many
-	// investigations may run concurrently.
+	// doesn't pass budget_seconds (clamped to max_seconds). max_concurrent_jobs
+	// is how many investigations may run at once, synchronous and async
+	// together (minimum 1).
 	viper.SetDefault("bedrock.async_default_seconds", 120)
 	viper.SetDefault("bedrock.max_concurrent_jobs", 3)
 	// Longest a single run_sql query may run. The ClickHouse driver sends

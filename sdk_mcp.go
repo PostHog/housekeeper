@@ -92,8 +92,9 @@ step: Go duration ("30s", "1m"). Pick one that yields <~50 points over the windo
 	// when bedrock.region + bedrock.model_id are configured. Runs server-side
 	// with the analyst connection and returns only a summary.
 	if bedrockEnabled() {
-		registerDiagnoseTool(srv)
-		registerDiagnoseAsyncTools(srv)
+		runner := newDiagnoseRunner(viper.GetInt("bedrock.max_concurrent_jobs"), runDiagnosis)
+		registerDiagnoseTool(srv, runner)
+		registerDiagnoseAsyncTools(srv, runner)
 		logrus.Info("diagnose tools enabled (Bedrock in-account analysis, sync + async)")
 	}
 

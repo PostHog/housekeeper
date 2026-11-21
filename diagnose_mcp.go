@@ -346,7 +346,7 @@ func runDiagnosis(ctx context.Context, question, cluster string, budgetSeconds i
 
 // registerDiagnoseTool adds the in-MCP, Bedrock-backed diagnose tool. The model
 // queries ClickHouse via the analyst connection and the tool returns its summary.
-func registerDiagnoseTool(srv *mcp.Server) {
+func registerDiagnoseTool(srv *mcp.Server, runner *diagnoseRunner) {
 
 	desc := `Ask a natural-language question about ClickHouse health and get an investigated, attributed diagnosis. Runs an in-account LLM agent that investigates server-side and returns only a summary. Use for "why is X slow / lagging / erroring", "what's driving load on <cluster>", "who owns this query pattern". For raw row access use clickhouse_query instead.
 
@@ -391,7 +391,20 @@ For investigations longer than your client can wait, use clickhouse_diagnose_asy
 				}
 			}
 
-			answer, err := runDiagnosis(ctx, q, args.Cluster, budget, progress)
+			if err := runner.acquire(); err != nil {
+				return nil, nil, err
+			}
+			defer runner.release()
+
+			// Bound the whole call. Each run_sql query also gets its own
+			// shorter timeout, which keeps the driver-derived
+			// max_execution_time within the profile's limit.
+			if budget > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, time.Duration(budget)*time.Second+diagnoseGrace)
+				defer cancel()
+			}
+			answer, err := runner.run(ctx, q, args.Cluster, budget, progress)
 			if err != nil {
 				return nil, nil, err
 			}

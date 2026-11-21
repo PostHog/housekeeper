@@ -110,19 +110,13 @@ func TestTokenExpired(t *testing.T) {
 	}
 }
 
-// setConfig sets viper keys for one test and restores them afterwards.
+// setConfig overrides viper keys for one test. Cleanup drops the overrides,
+// so env, config file and default values show through again.
 func setConfig(t *testing.T, kv map[string]any) {
 	t.Helper()
 	for k, v := range kv {
-		prev, had := viper.Get(k), viper.IsSet(k)
 		viper.Set(k, v)
-		t.Cleanup(func() {
-			if had {
-				viper.Set(k, prev)
-			} else {
-				viper.Set(k, nil)
-			}
-		})
+		t.Cleanup(func() { viper.Set(k, nil) })
 	}
 }
 
@@ -211,8 +205,11 @@ func TestConnectPlaintext(t *testing.T) {
 		t.Fatal(err)
 	}
 	setConfig(t, map[string]any{
-		"clickhouse.host": host, "clickhouse.port": port, "clickhouse.secure": false,
+		"clickhouse.host": host, "clickhouse.port": port, "clickhouse.secure": false, "clickhouse.database": "default",
 		"clickhouse.user": "default", "clickhouse.password": os.Getenv("HOUSEKEEPER_TEST_CLICKHOUSE_PASSWORD"),
+		"clickhouse.password_file": "",
+		"analyst_clickhouse.host":  "", "analyst_clickhouse.port": 0, "analyst_clickhouse.user": "",
+		"analyst_clickhouse.database": "", "analyst_clickhouse.secure": nil,
 	})
 	conn, err := connect()
 	if err != nil {

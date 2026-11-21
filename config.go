@@ -1,9 +1,13 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
@@ -15,6 +19,10 @@ import (
 // Env vars use the prefix HOUSEKEEPER_ with dots replaced by underscores, e.g.:
 //
 //	HOUSEKEEPER_CLICKHOUSE_HOST, HOUSEKEEPER_CLICKHOUSE_PASSWORD, HOUSEKEEPER_HTTP_AUTH_TOKEN
+//
+// An explicit path (argument or HOUSEKEEPER_CONFIG) that cannot be read is an
+// error, as is a config file found on the search path that cannot be parsed.
+// Finding no file on the search path is not.
 func loadConfig(explicitPath string) error {
 	// Enable environment variable support
 	viper.SetEnvPrefix("HOUSEKEEPER")
@@ -126,11 +134,9 @@ func loadConfig(explicitPath string) error {
 	if explicitPath != "" {
 		viper.SetConfigFile(explicitPath)
 		if err := viper.ReadInConfig(); err != nil {
-			// Don't fail if config file doesn't exist when flags are provided
-			logrus.WithError(err).Debug("Could not read config file, using defaults and flags")
-		} else {
-			logrus.WithField("config_file", viper.ConfigFileUsed()).Debug("Loaded config file")
+			return fmt.Errorf("reading config file %s: %w", explicitPath, err)
 		}
+		logrus.WithField("config_file", viper.ConfigFileUsed()).Debug("Loaded config file")
 	} else {
 		viper.SetConfigName("config")
 		viper.SetConfigType("yaml")
@@ -156,15 +162,39 @@ func loadConfig(explicitPath string) error {
 
 		// Try to read config, but don't fail if not found
 		if err := viper.ReadInConfig(); err != nil {
+			var notFound viper.ConfigFileNotFoundError
+			if !errors.As(err, &notFound) {
+				return fmt.Errorf("reading config file %s: %w", viper.ConfigFileUsed(), err)
+			}
 			logrus.WithError(err).Debug("No config file found, using defaults and flags")
 		} else {
 			logrus.WithField("config_file", viper.ConfigFileUsed()).Debug("Loaded config file")
 		}
 	}
 
+	normalizeAllowedDatabases()
 	// Configure logging after config is loaded
 	configureLogging()
 	return nil
+}
+
+// normalizeAllowedDatabases splits clickhouse.allowed_databases entries on
+// commas and whitespace. Viper splits a list from an env var on whitespace
+// only, so HOUSEKEEPER_CLICKHOUSE_ALLOWED_DATABASES="system,models" would
+// otherwise be one database named "system,models".
+func normalizeAllowedDatabases() {
+	const key = "clickhouse.allowed_databases"
+	viper.Set(key, nil) // drop an earlier normalization so env/config are re-read
+	raw := viper.GetStringSlice(key)
+	out := make([]string, 0, len(raw))
+	for _, item := range raw {
+		out = append(out, strings.FieldsFunc(item, func(r rune) bool {
+			return r == ',' || unicode.IsSpace(r)
+		})...)
+	}
+	if !slices.Equal(out, raw) {
+		viper.Set(key, out)
+	}
 }
 
 // configureLogging sets up logrus based on configuration

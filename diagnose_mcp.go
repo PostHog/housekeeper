@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
@@ -56,6 +57,66 @@ func resolveBudgetSeconds(requested int) int {
 		return c
 	}
 	return requested
+}
+
+// minQueryTimeout is the shortest timeout a run_sql query gets, so a query
+// issued just before the budget runs out still has a chance to finish.
+const minQueryTimeout = 5 * time.Second
+
+// queryTimeout is the longest a single run_sql query may run
+// (bedrock.max_query_seconds). The driver turns a context deadline into
+// max_execution_time = timeout + 5s, so keep this at or below the analyst
+// profile's max_execution_time constraint minus 5.
+func queryTimeout() time.Duration {
+	s := viper.GetInt("bedrock.max_query_seconds")
+	if s <= 0 {
+		s = 60
+	}
+	return time.Duration(s) * time.Second
+}
+
+// runSQLTimeout returns the timeout for the next run_sql query: maxQuery,
+// shortened to the time left in the budget (zero budgetDeadline = no budget),
+// but never below minQueryTimeout.
+func runSQLTimeout(now, budgetDeadline time.Time, maxQuery time.Duration) time.Duration {
+	timeout := maxQuery
+	if !budgetDeadline.IsZero() {
+		if left := budgetDeadline.Sub(now); left < timeout {
+			timeout = left
+		}
+	}
+	if timeout < minQueryTimeout {
+		timeout = minQueryTimeout
+	}
+	return timeout
+}
+
+// runSQLHandler returns the handler for the diagnose agent's run_sql tool.
+// Every query runs on its own child context. Besides bounding the query, this
+// bounds the max_execution_time setting the driver derives from the context
+// deadline: with only the investigation's deadline, a long budget made the
+// driver request more than the profile allows, and every query failed.
+func runSQLHandler(ctx context.Context, conn driver.Conn, budgetDeadline time.Time, maxQuery time.Duration) toolHandler {
+	return func(name string, input map[string]any) (string, error) {
+		if name != "run_sql" {
+			return "", fmt.Errorf("unknown tool %q", name)
+		}
+		sql, _ := input["sql"].(string)
+		sql = strings.TrimSpace(sql)
+		if sql == "" {
+			return "", fmt.Errorf("sql is empty")
+		}
+		if err := validateFreeformSQL(sql); err != nil {
+			return "", err
+		}
+		qctx, cancel := context.WithTimeout(ctx, runSQLTimeout(time.Now(), budgetDeadline, maxQuery))
+		defer cancel()
+		rows, err := queryRows(qctx, conn, sql)
+		if err != nil {
+			return "", err
+		}
+		return formatRowsForModel(rows), nil
+	}
 }
 
 // connectAnalyst opens the ClickHouse connection used by the diagnose agent. It
@@ -236,24 +297,11 @@ func runDiagnosis(ctx context.Context, question, cluster string, budgetSeconds i
 		},
 	}
 
-	handle := func(name string, input map[string]any) (string, error) {
-		if name != "run_sql" {
-			return "", fmt.Errorf("unknown tool %q", name)
-		}
-		sql, _ := input["sql"].(string)
-		sql = strings.TrimSpace(sql)
-		if sql == "" {
-			return "", fmt.Errorf("sql is empty")
-		}
-		if err := validateFreeformSQL(sql); err != nil {
-			return "", err
-		}
-		rows, err := queryRows(ctx, conn, sql)
-		if err != nil {
-			return "", err
-		}
-		return formatRowsForModel(rows), nil
+	var budgetDeadline time.Time
+	if budgetSeconds > 0 {
+		budgetDeadline = time.Now().Add(time.Duration(budgetSeconds) * time.Second)
 	}
+	handle := runSQLHandler(ctx, conn, budgetDeadline, queryTimeout())
 
 	userMsg := question
 	if c := strings.TrimSpace(cluster); c != "" {

@@ -74,6 +74,10 @@ func loadConfig(explicitPath string) error {
 	// investigations may run concurrently.
 	viper.SetDefault("bedrock.async_default_seconds", 120)
 	viper.SetDefault("bedrock.max_concurrent_jobs", 3)
+	// Longest a single run_sql query may run. The ClickHouse driver sends
+	// max_execution_time = this + 5, so keep it at or below the analyst
+	// profile's max_execution_time constraint minus 5.
+	viper.SetDefault("bedrock.max_query_seconds", 60)
 	// < 0 = don't send temperature. Newer Anthropic models (Sonnet 5+) reject
 	// the parameter on Converse; set >= 0 only for older models that accept it.
 	viper.SetDefault("bedrock.temperature", -1)

@@ -28,9 +28,9 @@ import (
 // finishedJobTTL is how long completed/failed jobs stay pollable.
 const finishedJobTTL = 30 * time.Minute
 
-// jobRunGrace is added to a job's budget for its context deadline, covering
+// diagnoseGrace is added to a job's budget for its context deadline, covering
 // the final summarize turn(s) after the budget itself is exhausted.
-const jobRunGrace = 90 * time.Second
+const diagnoseGrace = 90 * time.Second
 
 type diagnoseAsyncArgs struct {
 	Question string `json:"question"`
@@ -216,7 +216,7 @@ budget_seconds: wall-clock budget (default %d, cap %d). Finished results stay po
 // background context (the originating request has already returned) and
 // records the outcome on the job. A panic is contained to the job.
 func runDiagnoseJob(store *diagnoseJobStore, job *diagnoseJob, question, cluster string, budget int) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(budget)*time.Second+jobRunGrace)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(budget)*time.Second+diagnoseGrace)
 	defer cancel()
 
 	finish := func(status, answer, errMsg string) {

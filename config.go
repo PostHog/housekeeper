@@ -1,9 +1,13 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
@@ -15,6 +19,10 @@ import (
 // Env vars use the prefix HOUSEKEEPER_ with dots replaced by underscores, e.g.:
 //
 //	HOUSEKEEPER_CLICKHOUSE_HOST, HOUSEKEEPER_CLICKHOUSE_PASSWORD, HOUSEKEEPER_HTTP_AUTH_TOKEN
+//
+// An explicit path (argument or HOUSEKEEPER_CONFIG) that cannot be read is an
+// error, as is a config file found on the search path that cannot be parsed.
+// Finding no file on the search path is not.
 func loadConfig(explicitPath string) error {
 	// Enable environment variable support
 	viper.SetEnvPrefix("HOUSEKEEPER")
@@ -32,6 +40,14 @@ func loadConfig(explicitPath string) error {
 	viper.SetDefault("clickhouse.password_file", "")
 	viper.SetDefault("clickhouse.database", "default")
 	viper.SetDefault("clickhouse.cluster", "default")
+	// TLS for the native protocol. secure=false connects in plaintext (e.g. a
+	// local server on 9000). tls_skip_verify defaults to true only to preserve
+	// the earlier behaviour, which never verified the server certificate; set
+	// it to false with ca_file (and server_name if the host is an IP or alias).
+	viper.SetDefault("clickhouse.secure", true)
+	viper.SetDefault("clickhouse.tls_skip_verify", true)
+	viper.SetDefault("clickhouse.ca_file", "")
+	viper.SetDefault("clickhouse.server_name", "")
 
 	viper.SetDefault("prometheus.host", "localhost")
 	viper.SetDefault("prometheus.port", 8481)
@@ -44,6 +60,19 @@ func loadConfig(explicitPath string) error {
 
 	viper.SetDefault("http.addr", ":8080")
 	viper.SetDefault("http.auth_token", "")
+	// MCP sessions with no requests for this long are closed (0 = never).
+	viper.SetDefault("http.session_timeout_seconds", 1800)
+	viper.SetDefault("http.read_header_timeout_seconds", 10)
+	// On SIGTERM/SIGINT, how long to wait for in-flight requests and async
+	// diagnoses before cancelling them. Keep below the pod's termination grace.
+	viper.SetDefault("http.shutdown_timeout_seconds", 25)
+
+	// Per-call timeouts for clickhouse_query and prometheus_query (0 = none).
+	// The ClickHouse driver sends max_execution_time = timeout + 5, so keep
+	// clickhouse.query_timeout_seconds at or below the restricted profile's
+	// max_execution_time constraint minus 5.
+	viper.SetDefault("clickhouse.query_timeout_seconds", 90)
+	viper.SetDefault("prometheus.query_timeout_seconds", 30)
 
 	// Deployment-specific guidance. extra_tool_description is shared facts
 	// appended to BOTH clickhouse_query and the diagnose agent (topology,
@@ -70,10 +99,15 @@ func loadConfig(explicitPath string) error {
 	// larger timeouts opt up per call, clamped to max_seconds.
 	viper.SetDefault("bedrock.default_seconds", 35)
 	// Async jobs (clickhouse_diagnose_async): default budget when the caller
-	// doesn't pass budget_seconds (clamped to max_seconds), and how many
-	// investigations may run concurrently.
+	// doesn't pass budget_seconds (clamped to max_seconds). max_concurrent_jobs
+	// is how many investigations may run at once, synchronous and async
+	// together (minimum 1).
 	viper.SetDefault("bedrock.async_default_seconds", 120)
 	viper.SetDefault("bedrock.max_concurrent_jobs", 3)
+	// Longest a single run_sql query may run. The ClickHouse driver sends
+	// max_execution_time = this + 5, so keep it at or below the analyst
+	// profile's max_execution_time constraint minus 5.
+	viper.SetDefault("bedrock.max_query_seconds", 60)
 	// < 0 = don't send temperature. Newer Anthropic models (Sonnet 5+) reject
 	// the parameter on Converse; set >= 0 only for older models that accept it.
 	viper.SetDefault("bedrock.temperature", -1)
@@ -86,6 +120,10 @@ func loadConfig(explicitPath string) error {
 	viper.SetDefault("analyst_clickhouse.password", "")
 	viper.SetDefault("analyst_clickhouse.password_file", "")
 	viper.SetDefault("analyst_clickhouse.database", "")
+	// analyst_clickhouse.secure / tls_skip_verify / ca_file / server_name have
+	// no defaults on purpose: unset, they follow the clickhouse.* values.
+	viper.SetDefault("analyst_clickhouse.ca_file", "")
+	viper.SetDefault("analyst_clickhouse.server_name", "")
 
 	if explicitPath == "" {
 		if env := os.Getenv("HOUSEKEEPER_CONFIG"); env != "" {
@@ -96,11 +134,9 @@ func loadConfig(explicitPath string) error {
 	if explicitPath != "" {
 		viper.SetConfigFile(explicitPath)
 		if err := viper.ReadInConfig(); err != nil {
-			// Don't fail if config file doesn't exist when flags are provided
-			logrus.WithError(err).Debug("Could not read config file, using defaults and flags")
-		} else {
-			logrus.WithField("config_file", viper.ConfigFileUsed()).Debug("Loaded config file")
+			return fmt.Errorf("reading config file %s: %w", explicitPath, err)
 		}
+		logrus.WithField("config_file", viper.ConfigFileUsed()).Debug("Loaded config file")
 	} else {
 		viper.SetConfigName("config")
 		viper.SetConfigType("yaml")
@@ -126,15 +162,39 @@ func loadConfig(explicitPath string) error {
 
 		// Try to read config, but don't fail if not found
 		if err := viper.ReadInConfig(); err != nil {
+			var notFound viper.ConfigFileNotFoundError
+			if !errors.As(err, &notFound) {
+				return fmt.Errorf("reading config file %s: %w", viper.ConfigFileUsed(), err)
+			}
 			logrus.WithError(err).Debug("No config file found, using defaults and flags")
 		} else {
 			logrus.WithField("config_file", viper.ConfigFileUsed()).Debug("Loaded config file")
 		}
 	}
 
+	normalizeAllowedDatabases()
 	// Configure logging after config is loaded
 	configureLogging()
 	return nil
+}
+
+// normalizeAllowedDatabases splits clickhouse.allowed_databases entries on
+// commas and whitespace. Viper splits a list from an env var on whitespace
+// only, so HOUSEKEEPER_CLICKHOUSE_ALLOWED_DATABASES="system,models" would
+// otherwise be one database named "system,models".
+func normalizeAllowedDatabases() {
+	const key = "clickhouse.allowed_databases"
+	viper.Set(key, nil) // drop an earlier normalization so env/config are re-read
+	raw := viper.GetStringSlice(key)
+	out := make([]string, 0, len(raw))
+	for _, item := range raw {
+		out = append(out, strings.FieldsFunc(item, func(r rune) bool {
+			return r == ',' || unicode.IsSpace(r)
+		})...)
+	}
+	if !slices.Equal(out, raw) {
+		viper.Set(key, out)
+	}
 }
 
 // configureLogging sets up logrus based on configuration

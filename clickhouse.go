@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -12,28 +11,28 @@ import (
 )
 
 func connect() (driver.Conn, error) {
-	var (
-		ctx       = context.Background()
-		addr      = fmt.Sprintf("%s:%d", viper.GetString("clickhouse.host"), viper.GetInt("clickhouse.port"))
-		conn, err = clickhouse.Open(&clickhouse.Options{
-			Addr: []string{addr},
-			Auth: clickhouse.Auth{
-				Database: viper.GetString("clickhouse.database"),
-				Username: viper.GetString("clickhouse.user"),
-				Password: clickhousePassword(viper.GetString("clickhouse.password_file"), viper.GetString("clickhouse.password")),
+	tlsConfig, err := clickhouseTLSConfig("clickhouse")
+	if err != nil {
+		return nil, err
+	}
+	addr := fmt.Sprintf("%s:%d", viper.GetString("clickhouse.host"), viper.GetInt("clickhouse.port"))
+	conn, err := clickhouse.Open(&clickhouse.Options{
+		Addr: []string{addr},
+		Auth: clickhouse.Auth{
+			Database: viper.GetString("clickhouse.database"),
+			Username: viper.GetString("clickhouse.user"),
+			Password: clickhousePassword(viper.GetString("clickhouse.password_file"), viper.GetString("clickhouse.password")),
+		},
+		TLS: tlsConfig,
+		ClientInfo: clickhouse.ClientInfo{
+			Products: []struct {
+				Name    string
+				Version string
+			}{
+				{Name: "gemini-go-clickhouse", Version: "0.1"},
 			},
-			TLS: &tls.Config{InsecureSkipVerify: true},
-			ClientInfo: clickhouse.ClientInfo{
-				Products: []struct {
-					Name    string
-					Version string
-				}{
-					{Name: "gemini-go-clickhouse", Version: "0.1"},
-				},
-			},
-		})
-	)
-
+		},
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -43,8 +42,11 @@ func connect() (driver.Conn, error) {
 		"port":     viper.GetInt("clickhouse.port"),
 		"database": viper.GetString("clickhouse.database"),
 		"user":     viper.GetString("clickhouse.user"),
+		"tls":      tlsConfig != nil,
 	}).Debug("Attempting to connect to ClickHouse")
 
+	ctx, cancel := context.WithTimeout(context.Background(), connectPingTimeout)
+	defer cancel()
 	if err := conn.Ping(ctx); err != nil {
 		if exception, ok := err.(*clickhouse.Exception); ok {
 			logrus.WithFields(logrus.Fields{
@@ -53,6 +55,7 @@ func connect() (driver.Conn, error) {
 				"stacktrace": exception.StackTrace,
 			}).Error("ClickHouse exception occurred")
 		}
+		_ = conn.Close()
 		return nil, err
 	}
 	logrus.Debug("Successfully connected to ClickHouse")

@@ -3,8 +3,7 @@
 **Housekeeper runs as an MCP server by default** - no flags needed! It serves MCP over HTTP (streamable HTTP transport); connect a client such as Claude Desktop via [mcp-remote](https://github.com/geelen/mcp-remote). This document covers the complete MCP implementation that exposes tools for:
 1. Read‑only queries against configurable ClickHouse databases
 2. Querying Prometheus metrics for monitoring and correlation
-3. (Optional) Querying a separate Prometheus endpoint for ClickHouse-internal metrics
-4. (Optional) An in-account, Bedrock-backed diagnosis agent (`clickhouse_diagnose`)
+3. (Optional) An in-account, Bedrock-backed diagnosis agent (`clickhouse_diagnose`, plus the async `clickhouse_diagnose_async` / `clickhouse_diagnose_result` pair)
 
 > **Looking for investigation guidance?** See [INVESTIGATION_PLAYBOOK.md](./INVESTIGATION_PLAYBOOK.md) for a methodology and `system.*` query patterns for diagnosing ClickHouse + ZooKeeper issues using these tools.
 
@@ -72,6 +71,7 @@ Available flags:
 - Required keys for ClickHouse: `clickhouse.host`, `clickhouse.port`, `clickhouse.user`, `clickhouse.password`, `clickhouse.database`, `clickhouse.cluster`.
   - The DB user should be read‑only; queries are restricted to the configured `clickhouse.allowed_databases` (defaults to `["system"]`).
 - Required keys for Prometheus: `prometheus.host`, `prometheus.port`.
+- Optional `clickhouse.password_file` / `analyst_clickhouse.password_file`: a file holding a rotating token (e.g. a projected ServiceAccount token), re-read on every connect. An unreadable or empty file falls back to the static `password`, as does an expired token when a `password` is set.
 
 ### Victoria Metrics from Kubernetes
 
@@ -86,8 +86,7 @@ kubectl port-forward --namespace=monitoring svc/vmcluster-victoria-metrics-clust
 
 The server uses the official go-sdk and serves MCP over HTTP using the streamable HTTP transport. It listens on `http.addr` (default `:8080`), exposes the MCP endpoint at `POST /`, and a `GET /health` check for liveness probes (no auth; returns a static `ok`). Connect stdio-only clients (e.g. Claude Desktop) via [mcp-remote](https://github.com/geelen/mcp-remote).
 
-- **Default mode**: `./housekeeper` (runs the HTTP MCP server)
-- **Analysis mode**: `./housekeeper --analyze` (runs Gemini AI analysis)
+- Run `./housekeeper` (flags or `--config`); there is no other mode.
 - Optional bearer auth: set `http.auth_token` (or `--http-auth-token`) and clients must present it.
 - The server rejects cross-origin requests from browsers. A browser-based client must be served from the same origin as the server, or connect through a local proxy such as mcp-remote.
 - `POST /` requires `Content-Type: application/json`. Other content types get `415 Unsupported Media Type`.
@@ -127,8 +126,27 @@ The server uses the official go-sdk and serves MCP over HTTP using the streamabl
 - Name: `clickhouse_diagnose`
 - Description: Ask a natural-language question about ClickHouse health; a server-side Bedrock agent (credentials from the default AWS chain) investigates with a guarded `run_sql` tool on the elevated `analyst_clickhouse.*` connection and returns only a text summary — raw query text never leaves the account.
 - Registration: only exposed when both `bedrock.region` and `bedrock.model_id` are set.
-- Arguments: `question` (required), `cluster` (optional focus hint).
-- Budgets: `bedrock.max_iterations` run_sql round-trips and `bedrock.max_seconds` wall-clock; on exceeding the time budget the agent stops investigating and summarizes findings so far. The MCP client's tool timeout must exceed `bedrock.max_seconds` (e.g. `MCP_TOOL_TIMEOUT` in Claude Code) or the client gives up while the server keeps working.
+- Arguments: `question` (required), `cluster` (optional focus hint), `budget_seconds` (optional wall-clock budget; default `bedrock.default_seconds`, clamped to `bedrock.max_seconds`).
+- Budgets: at most `bedrock.max_iterations` run_sql round-trips, and the resolved `budget_seconds` of wall-clock time; when the time runs out the agent stops investigating and summarizes findings so far. The MCP client's tool timeout must exceed the budget (e.g. `MCP_TOOL_TIMEOUT` in Claude Code) or the client gives up while the server keeps working. The server sends an MCP progress notification per model turn when the client supplies a progress token, so clients that reset their timeout on progress can use longer budgets.
+
+### Tool: clickhouse_diagnose_async / clickhouse_diagnose_result (optional)
+
+- Registered together with `clickhouse_diagnose`.
+- `clickhouse_diagnose_async` takes the same arguments and returns a `job_id` immediately. Its `budget_seconds` defaults to `bedrock.async_default_seconds`, clamped to `bedrock.max_seconds`. At most `bedrock.max_concurrent_jobs` jobs run at once; further starts are rejected until one finishes.
+- `clickhouse_diagnose_result` takes `job_id` and returns `running` (elapsed seconds, model turn), `done` (the answer) or `error`. Poll every ~30s. Finished jobs expire after 30 minutes.
+- Jobs live in server memory, so a restart (or a different replica behind a load balancer) loses them.
+
+### Diagnose budget keys
+
+| Key | Default | Meaning |
+|---|---|---|
+| `bedrock.max_iterations` | 8 | `run_sql` round-trips per diagnosis |
+| `bedrock.max_seconds` | 25 | Wall-clock cap; every `budget_seconds` is clamped to it (0 = no cap) |
+| `bedrock.default_seconds` | 35 | `clickhouse_diagnose` budget when `budget_seconds` is omitted |
+| `bedrock.async_default_seconds` | 120 | `clickhouse_diagnose_async` budget when `budget_seconds` is omitted |
+| `bedrock.max_concurrent_jobs` | 3 | Concurrent async jobs |
+
+With the defaults, both default budgets are clamped to the 25s cap; raise `bedrock.max_seconds` to allow longer investigations.
 
 ## Example tools/call
 

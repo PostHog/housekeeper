@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"reflect"
@@ -122,7 +121,7 @@ func runSQLHandler(ctx context.Context, conn driver.Conn, budgetDeadline time.Ti
 // connectAnalyst opens the ClickHouse connection used by the diagnose agent. It
 // uses analyst_clickhouse.* config, falling back to the clickhouse.* connection
 // when no analyst user is set.
-func connectAnalyst() (driver.Conn, error) {
+func connectAnalyst(ctx context.Context) (driver.Conn, error) {
 	host := viper.GetString("analyst_clickhouse.host")
 	if host == "" {
 		host = viper.GetString("clickhouse.host")
@@ -146,11 +145,15 @@ func connectAnalyst() (driver.Conn, error) {
 		database = viper.GetString("clickhouse.database")
 	}
 
+	tlsConfig, err := clickhouseTLSConfig("analyst_clickhouse")
+	if err != nil {
+		return nil, err
+	}
 	addr := fmt.Sprintf("%s:%d", host, port)
 	conn, err := clickhouse.Open(&clickhouse.Options{
 		Addr: []string{addr},
 		Auth: clickhouse.Auth{Database: database, Username: user, Password: clickhousePassword(passwordFile, password)},
-		TLS:  &tls.Config{InsecureSkipVerify: true},
+		TLS:  tlsConfig,
 		ClientInfo: clickhouse.ClientInfo{
 			Products: []struct {
 				Name    string
@@ -161,11 +164,13 @@ func connectAnalyst() (driver.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	ctx := context.Background()
-	if err := conn.Ping(ctx); err != nil {
+	pingCtx, cancel := context.WithTimeout(ctx, connectPingTimeout)
+	defer cancel()
+	if err := conn.Ping(pingCtx); err != nil {
+		_ = conn.Close()
 		return nil, err
 	}
-	logrus.WithFields(logrus.Fields{"host": host, "user": user}).Debug("diagnose: analyst connection established")
+	logrus.WithFields(logrus.Fields{"host": host, "user": user, "tls": tlsConfig != nil}).Debug("diagnose: analyst connection established")
 	return conn, nil
 }
 
@@ -294,7 +299,7 @@ func runDiagnosis(ctx context.Context, question, cluster string, budgetSeconds i
 	if err != nil {
 		return "", err
 	}
-	conn, err := connectAnalyst()
+	conn, err := connectAnalyst(ctx)
 	if err != nil {
 		return "", fmt.Errorf("analyst connection: %w", err)
 	}

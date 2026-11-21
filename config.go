@@ -32,6 +32,14 @@ func loadConfig(explicitPath string) error {
 	viper.SetDefault("clickhouse.password_file", "")
 	viper.SetDefault("clickhouse.database", "default")
 	viper.SetDefault("clickhouse.cluster", "default")
+	// TLS for the native protocol. secure=false connects in plaintext (e.g. a
+	// local server on 9000). tls_skip_verify defaults to true only to preserve
+	// the earlier behaviour, which never verified the server certificate; set
+	// it to false with ca_file (and server_name if the host is an IP or alias).
+	viper.SetDefault("clickhouse.secure", true)
+	viper.SetDefault("clickhouse.tls_skip_verify", true)
+	viper.SetDefault("clickhouse.ca_file", "")
+	viper.SetDefault("clickhouse.server_name", "")
 
 	viper.SetDefault("prometheus.host", "localhost")
 	viper.SetDefault("prometheus.port", 8481)
@@ -104,6 +112,10 @@ func loadConfig(explicitPath string) error {
 	viper.SetDefault("analyst_clickhouse.password", "")
 	viper.SetDefault("analyst_clickhouse.password_file", "")
 	viper.SetDefault("analyst_clickhouse.database", "")
+	// analyst_clickhouse.secure / tls_skip_verify / ca_file / server_name have
+	// no defaults on purpose: unset, they follow the clickhouse.* values.
+	viper.SetDefault("analyst_clickhouse.ca_file", "")
+	viper.SetDefault("analyst_clickhouse.server_name", "")
 
 	if explicitPath == "" {
 		if env := os.Getenv("HOUSEKEEPER_CONFIG"); env != "" {

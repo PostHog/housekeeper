@@ -90,8 +90,8 @@ system.* tables are per-node (wrap them yourself in sql mode); replicated tables
 
 	defaultPromDesc := `Execute PromQL range queries against Prometheus metrics.
 
-start/end: RFC3339 UTC or relative ("-30m", "-1h"). end defaults to now(). Future timestamps are rejected. Prefer relative ("-30m") when the current time isn't known.
-step: Go duration ("30s", "1m"). Pick one that yields <~50 points over the window.`
+start/end: RFC3339 UTC or relative ("-30m", "-1h"). end defaults to now(), start to 1h before end. Future timestamps are rejected. Prefer relative ("-30m") when the current time isn't known.
+step: Go duration ("30s", "1m"). Defaults to the window/50 (at least 15s); at most 11000 points per series. Results are capped at 500 series and 10000 raw samples (truncated: true when cut) — aggregate high-cardinality queries.`
 	registerPrometheusTool(srv, "prometheus_query", "Query Prometheus metrics", defaultPromDesc, defaultPromEndpoint)
 
 	// Optional: in-account, Bedrock-backed agentic diagnosis tool. Only exposed
@@ -138,9 +138,9 @@ func registerPrometheusTool(srv *mcp.Server, name, title, description, endpoint 
 				return nil, nil, err
 			}
 
-			step, err := time.ParseDuration(pa.Step)
+			step, err := resolveStep(pa.Step, start, end)
 			if err != nil {
-				return nil, nil, fmt.Errorf("invalid step duration: %v", err)
+				return nil, nil, err
 			}
 
 			ctx, cancel := withToolTimeout(ctx, "prometheus.query_timeout_seconds")
@@ -162,6 +162,9 @@ func registerPrometheusTool(srv *mcp.Server, name, title, description, endpoint 
 						parts = append(parts, fmt.Sprintf("%v: %v", metric, value))
 					}
 					summary = strings.Join(parts, "\n")
+					if truncated, _ := resultMap["truncated"].(bool); truncated {
+						summary += fmt.Sprintf("\n(%d series in total; %s)", resultMap["series_total"], promTruncatedNotice)
+					}
 				} else if raw, ok := resultMap["raw_result"]; ok {
 					summary = fmt.Sprintf("%v", raw)
 				} else {

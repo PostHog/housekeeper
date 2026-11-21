@@ -70,9 +70,6 @@ func connect() (driver.Conn, error) {
 					{Name: "gemini-go-clickhouse", Version: "0.1"},
 				},
 			},
-			Debugf: func(format string, v ...interface{}) {
-				logrus.Debugf(format, v...)
-			},
 		})
 	)
 

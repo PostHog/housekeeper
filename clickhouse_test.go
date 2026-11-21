@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"testing"
 	"time"
 
@@ -111,6 +112,14 @@ func (m *MockConn) AsyncInsert(ctx context.Context, query string, wait bool, arg
 	return nil
 }
 
+func (m *MockConn) QueryFormat(ctx context.Context, format string, query string, args ...interface{}) (io.ReadCloser, error) {
+	return nil, nil
+}
+
+func (m *MockConn) InsertFormat(ctx context.Context, format string, query string, data io.Reader) error {
+	return nil
+}
+
 func (m *MockConn) Ping(ctx context.Context) error {
 	return m.pingError
 }
@@ -192,6 +201,10 @@ func (m *MockRows) Totals(dest ...interface{}) error {
 
 func (m *MockRows) ScanStruct(dest interface{}) error {
 	return nil
+}
+
+func (m *MockRows) HasData() bool {
+	return m.maxRows > 0
 }
 
 func TestGetCHErrors(t *testing.T) {

@@ -121,7 +121,7 @@ The server uses the official go-sdk and serves MCP over HTTP using the streamabl
   - `start` (optional): Start time in RFC3339 format or relative time (e.g. "-1h"); defaults to an hour before `end`
   - `end` (optional): End time in RFC3339 format or relative time (e.g. "-1h"); defaults to now
   - `step` (optional): Step duration (e.g. "15s", "1m", "1h"); defaults to the window / 50, at least 15s. A step ≤ 0, or one that gives more than 11000 points, is rejected.
-- Results are capped at 100 series, 2000 raw samples and about 60 KB of JSON, with `truncated` and `series_total` in the result. Each call is bounded by `prometheus.query_timeout_seconds` (default 30).
+- Results are capped at 100 series, 2000 raw samples and about 40 KB of JSON, with `truncated` and `series_total` in the result. Each call is bounded by `prometheus.query_timeout_seconds` (default 30).
 
 ### Tool: clickhouse_diagnose (optional)
 

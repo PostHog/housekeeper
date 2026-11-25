@@ -204,7 +204,8 @@ func TestSummarizePromResultByteCap(t *testing.T) {
 		{"labels near the size of a real exporter's", 18000, 41, 330, true},
 		{"long labels cut last_values", promMaxSeries, 1, 2000, true},
 		{"a label set over the cap is dropped", 1, 10, promMaxResultBytes, true},
-		{"one series at the sample cap fits", 1, promMaxRawSamples, 10, false},
+		{"a long series keeps its latest samples", 1, promMaxRawSamples, 10, true},
+		{"a default-window series fits", 1, 1000, 10, false},
 		{"a per-host query fits", 20, 51, 330, false},
 	}
 	for _, tt := range tests {

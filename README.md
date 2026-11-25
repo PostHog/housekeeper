@@ -79,7 +79,7 @@ Example questions you can ask Claude:
 ### `prometheus_query`
 Execute PromQL queries for metrics analysis:
 - Range queries with customizable time windows (`start` defaults to an hour before `end`, `step` to the window / 50)
-- Capped at 11000 points per series, 100 series, 2000 raw samples and about 60 KB of JSON (`truncated: true` when cut)
+- Capped at 11000 points per series, 100 series, 2000 raw samples and about 40 KB of JSON (`truncated: true` when cut)
 - Support for Victoria Metrics cluster mode
 
 Example requests:

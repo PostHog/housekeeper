@@ -84,7 +84,7 @@ const (
 	promMaxPoints       = 11000
 	promMaxSeries       = 100
 	promMaxRawSamples   = 2000
-	promMaxResultBytes  = 60000
+	promMaxResultBytes  = 40000
 	promTruncatedNotice = "result truncated — narrow the query with label matchers or aggregate (sum by, topk)"
 )
 

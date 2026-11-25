@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -75,14 +76,15 @@ func queryPrometheus(ctx context.Context, endpoint, query string, start, end tim
 }
 
 // Range-query limits. Prometheus itself rejects more than 11,000 points per
-// series; the series and sample caps bound the size of a tool response.
+// series; the series, sample and byte caps bound the size of a tool response.
 const (
 	promDefaultRange    = time.Hour
 	promTargetPoints    = 50
 	promMinDefaultStep  = 15 * time.Second
 	promMaxPoints       = 11000
-	promMaxSeries       = 500
-	promMaxRawSamples   = 10000
+	promMaxSeries       = 100
+	promMaxRawSamples   = 2000
+	promMaxResultBytes  = 60000
 	promTruncatedNotice = "result truncated — narrow the query with label matchers or aggregate (sum by, topk)"
 )
 
@@ -173,10 +175,18 @@ func parseTime(timeStr string) (time.Time, error) {
 	return time.Parse(time.RFC3339, timeStr)
 }
 
+// encodedSize is the length of v as JSON.
+func encodedSize(v interface{}) (int, error) {
+	b, err := json.Marshal(v)
+	return len(b), err
+}
+
 // summarizePromResult reduces a range-query result for the tool response:
-// the last value of each series, and the raw matrix. Both are capped
-// (promMaxSeries series, promMaxRawSamples samples in raw_result); when
-// anything is dropped, "truncated" is true and series_total gives the count.
+// the last value of each series, and the raw matrix. Series are capped at
+// promMaxSeries, raw samples at promMaxRawSamples, and the two lists together
+// at about promMaxResultBytes of JSON, of which last_values takes at most half.
+// When anything is dropped, "truncated" is true; series_total is always the
+// full count.
 func summarizePromResult(result interface{}) (interface{}, error) {
 	matrix, ok := result.(model.Matrix)
 	if !ok {
@@ -194,32 +204,68 @@ func summarizePromResult(result interface{}) (interface{}, error) {
 		series = matrix[:promMaxSeries]
 	}
 
-	var lastValues []map[string]interface{}
+	lastValues := []map[string]interface{}{}
+	usedBytes := 0
 	for _, s := range series {
-		if len(s.Values) > 0 {
-			lastPoint := s.Values[len(s.Values)-1]
-			lastValues = append(lastValues, map[string]interface{}{
-				"metric": s.Metric,
-				"value":  lastPoint.Value,
-				"time":   lastPoint.Timestamp.Time(),
-			})
+		if len(s.Values) == 0 {
+			continue
 		}
+		lastPoint := s.Values[len(s.Values)-1]
+		entry := map[string]interface{}{
+			"metric": s.Metric,
+			"value":  lastPoint.Value,
+			"time":   lastPoint.Timestamp.Time(),
+		}
+		size, err := encodedSize(entry)
+		if err != nil {
+			return nil, err
+		}
+		if usedBytes+size > promMaxResultBytes/2 {
+			truncated = true
+			break
+		}
+		usedBytes += size
+		lastValues = append(lastValues, entry)
 	}
 
 	raw := make(model.Matrix, 0, len(series))
-	budget := promMaxRawSamples
+	samples := promMaxRawSamples
 	for _, s := range series {
-		if budget <= 0 {
+		if samples <= 0 {
 			truncated = true
 			break
 		}
 		values := s.Values
-		if len(values) > budget {
+		if len(values) > samples {
 			// Keep the most recent samples.
-			values = values[len(values)-budget:]
+			values = values[len(values)-samples:]
 			truncated = true
 		}
-		budget -= len(values)
+		base, err := encodedSize(model.SampleStream{Metric: s.Metric, Histograms: s.Histograms})
+		if err != nil {
+			return nil, err
+		}
+		size, err := encodedSize(values)
+		if err != nil {
+			return nil, err
+		}
+		room := promMaxResultBytes - usedBytes - base
+		if size > room {
+			truncated = true
+			keep := 0
+			if room > 0 {
+				keep = len(values) * room / size
+			}
+			if keep == 0 {
+				break
+			}
+			values = values[len(values)-keep:]
+			if size, err = encodedSize(values); err != nil {
+				return nil, err
+			}
+		}
+		usedBytes += base + size
+		samples -= len(values)
 		raw = append(raw, &model.SampleStream{Metric: s.Metric, Values: values, Histograms: s.Histograms})
 	}
 

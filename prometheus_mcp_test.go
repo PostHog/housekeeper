@@ -191,6 +191,56 @@ func TestSummarizePromResultCaps(t *testing.T) {
 	}
 }
 
+// TestSummarizePromResultByteCap uses label sets large enough that the byte
+// cap applies before the series and sample caps.
+func TestSummarizePromResultByteCap(t *testing.T) {
+	tests := []struct {
+		name          string
+		series        int
+		points        int
+		labelBytes    int
+		wantTruncated bool
+	}{
+		{"labels near the size of a real exporter's", 18000, 41, 330, true},
+		{"long labels cut last_values", promMaxSeries, 1, 2000, true},
+		{"a label set over the cap is dropped", 1, 10, promMaxResultBytes, true},
+		{"one series at the sample cap fits", 1, promMaxRawSamples, 10, false},
+		{"a per-host query fits", 20, 51, 330, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := testMatrix(tt.series, tt.points)
+			for _, s := range m {
+				s.Metric["pad"] = model.LabelValue(strings.Repeat("x", tt.labelBytes))
+				for i := range s.Values {
+					s.Values[i].Timestamp += 1800000000123
+				}
+			}
+			out, err := summarizePromResult(m)
+			if err != nil {
+				t.Fatal(err)
+			}
+			res := out.(map[string]interface{})
+			if res["truncated"] != tt.wantTruncated || res["series_total"] != tt.series {
+				t.Errorf("truncated = %v, series_total = %v; want %v, %d", res["truncated"], res["series_total"], tt.wantTruncated, tt.series)
+			}
+			size, err := encodedSize(res)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Separators and the envelope are not counted.
+			if limit := promMaxResultBytes + 1000; size > limit {
+				t.Errorf("encoded result is %d bytes, want at most %d", size, limit)
+			}
+			if !tt.wantTruncated {
+				if got, want := rawSamples(res["raw_result"].(model.Matrix)), tt.series*tt.points; got != want {
+					t.Errorf("raw samples = %d, want %d", got, want)
+				}
+			}
+		})
+	}
+}
+
 // TestPrometheusToolEndToEnd calls the tool through an MCP session against a
 // fake Prometheus, covering the defaults and the per-call timeout.
 func TestPrometheusToolEndToEnd(t *testing.T) {

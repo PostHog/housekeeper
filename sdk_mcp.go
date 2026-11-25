@@ -96,7 +96,7 @@ system.* tables are per-node (wrap them yourself in sql mode); replicated tables
 	defaultPromDesc := `Execute PromQL range queries against Prometheus metrics.
 
 start/end: RFC3339 UTC or relative ("-30m", "-1h"). end defaults to now(), start to 1h before end. Future timestamps are rejected. Prefer relative ("-30m") when the current time isn't known.
-step: Go duration ("30s", "1m"). Defaults to the window/50 (at least 15s); at most 11000 points per series. Results are capped at 500 series and 10000 raw samples (truncated: true when cut) — aggregate high-cardinality queries.`
+step: Go duration ("30s", "1m"). Defaults to the window/50 (at least 15s); at most 11000 points per series. Results are capped at 100 series, 2000 raw samples and about 60 KB (truncated: true when cut) — aggregate high-cardinality queries.`
 	registerPrometheusTool(srv, "prometheus_query", "Query Prometheus metrics", defaultPromDesc, defaultPromEndpoint)
 
 	// Optional: in-account, Bedrock-backed agentic diagnosis tool. Only exposed
